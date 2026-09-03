@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from statistics import median
 from typing import Final
@@ -43,7 +43,11 @@ class HistoricalUniverseSelector:
             symbol = self._text(security.get("symbol"))
             listed_on = self._date(security.get("list_date"))
             status = statuses.get(symbol, {})
-            reason = self._exclusion_reason(security, status, listed_on, open_dates, amounts.get(symbol, []))
+            reason = (
+                "data_not_available_at_as_of"
+                if not self._available_on_or_before(security, as_of_date)
+                else self._exclusion_reason(security, status, listed_on, open_dates, amounts.get(symbol, []))
+            )
             values = sorted(amounts.get(symbol, []))
             median_amount = Decimal(str(median(values))) if values else None
             decisions.append(UniverseDecision(symbol, reason is None, reason, median_amount))
@@ -78,7 +82,8 @@ class HistoricalUniverseSelector:
     ) -> str | None:
         if self._text(security.get("security_type")).upper() != "COMMON":
             return "non_common_stock"
-        if self._text(security.get("board")).upper() != "MAIN":
+        board = self._text(status.get("board") or security.get("board"))
+        if board.upper() != "MAIN":
             return "non_mainboard_common_stock"
         if self._truth(status.get("is_st")):
             return "st"
@@ -109,13 +114,14 @@ class HistoricalUniverseSelector:
             return {
                 symbol: row
                 for symbol, row in status_history.items()
-                if (effective := cls._date(row.get("effective_date"))) is None or effective <= as_of_date
+                if cls._available_on_or_before(row, as_of_date)
+                and ((effective := cls._date(row.get("effective_date"))) is None or effective <= as_of_date)
             }
         selected: dict[str, tuple[date, Row]] = {}
         for row in status_history:
             symbol = cls._text(row.get("symbol"))
             effective = cls._date(row.get("effective_date"))
-            if effective is not None and effective <= as_of_date:
+            if effective is not None and effective <= as_of_date and cls._available_on_or_before(row, as_of_date):
                 prior = selected.get(symbol)
                 if prior is None or effective > prior[0]:
                     selected[symbol] = (effective, row)
@@ -127,7 +133,7 @@ class HistoricalUniverseSelector:
         for row in daily_bars:
             symbol = cls._text(row.get("symbol"))
             trade_date = cls._date(row.get("trade_date"))
-            if trade_date is None or trade_date > as_of_date:
+            if trade_date is None or trade_date > as_of_date or not cls._available_on_or_before(row, as_of_date):
                 continue
             try:
                 amount = Decimal(str(row.get("amount")))
@@ -154,3 +160,22 @@ class HistoricalUniverseSelector:
     @staticmethod
     def _truth(value: object) -> bool:
         return value is True or (isinstance(value, str) and value.lower() in {"true", "1", "yes"})
+
+    @classmethod
+    def _available_on_or_before(cls, row: Row, as_of_date: date) -> bool:
+        value = row.get("available_at")
+        if value is None:
+            return True
+        if isinstance(value, datetime):
+            return value.date() <= as_of_date
+        if isinstance(value, date):
+            return value <= as_of_date
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value).date() <= as_of_date
+            except ValueError:
+                try:
+                    return date.fromisoformat(value) <= as_of_date
+                except ValueError:
+                    return False
+        return False

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Final
 
@@ -58,7 +60,6 @@ class AuthorizedFileImporter:
             and information_cutoff_at > available_at
         ):
             raise ValueError("information_cutoff_at cannot be later than available_at")
-        content = source_path.read_bytes()
         frame = (
             pd.read_csv(source_path)
             if source_path.suffix.lower() == ".csv"
@@ -67,7 +68,7 @@ class AuthorizedFileImporter:
         rows = tuple(self._record(row) for row in frame.to_dict(orient="records"))
         return ImportedDataset(
             source_path=source_path,
-            content_hash=hashlib.sha256(content).hexdigest(),
+            content_hash=canonical_content_hash(rows),
             rows=rows,
             dataset_type=dataset_type,
             as_of_date=as_of_date,
@@ -82,3 +83,34 @@ class AuthorizedFileImporter:
         for key, value in row.items():
             result[str(key)] = None if pd.isna(value) else value
         return result
+
+
+def canonical_content_hash(rows: tuple[dict[str, object], ...] | list[dict[str, object]]) -> str:
+    """Hash stable logical content, independent of file formatting and field order."""
+    canonical_rows = [_canonical_value(row) for row in rows]
+    canonical_rows.sort(key=lambda row: json.dumps(row, sort_keys=True, separators=(",", ":")))
+    payload = json.dumps(canonical_rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _canonical_value(value: object) -> object:
+    if value is None:
+        return None
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return format(value.normalize(), "f")
+    if isinstance(value, float):
+        return format(Decimal(str(value)).normalize(), "f")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): _canonical_value(item) for key, item in sorted(value.items(), key=lambda item: str(item[0]))}
+    if isinstance(value, (list, tuple)):
+        return [_canonical_value(item) for item in value]
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value).isoformat()
+        except ValueError:
+            return value
+    return str(value)
