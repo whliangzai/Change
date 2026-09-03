@@ -12,13 +12,23 @@ _SENSITIVE_ASSIGNMENT = re.compile(
     r"queue[_-]?url|database[_-]?url)\s*(?P<separator>=|:)\s*(?P<value>[^\s,;]+)",
     re.IGNORECASE,
 )
+_AUTHORIZATION_BEARER_CREDENTIAL = re.compile(
+    r"\bauthorization\s*:\s*bearer\s+[^\s,;]+",
+    re.IGNORECASE,
+)
+_BARE_BEARER_CREDENTIAL = re.compile(
+    r"\bbearer\s+(?=[^\s,;]*[-._~+/=])[A-Za-z0-9._~+/=-]+",
+    re.IGNORECASE,
+)
 _CREDENTIAL_URL = re.compile(r"(?:postgres(?:ql)?|redis)://[^\s,;]+", re.IGNORECASE)
 
 
 def sanitize_text(value: str) -> str:
     """Mask key/value secrets and credential-bearing URLs in arbitrary log text."""
+    sanitized = _AUTHORIZATION_BEARER_CREDENTIAL.sub("***", value)
+    sanitized = _BARE_BEARER_CREDENTIAL.sub("***", sanitized)
     sanitized = _SENSITIVE_ASSIGNMENT.sub(
-        lambda match: f"{match.group('key')}{match.group('separator')}***", value
+        lambda match: f"{match.group('key')}{match.group('separator')}***", sanitized
     )
     return _CREDENTIAL_URL.sub("***", sanitized)
 
