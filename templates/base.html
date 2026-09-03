@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>{{ title|default('研究验证系统') }}</title></head>
+<body>
+<header><strong>A股短线量化验证系统</strong> | 数据日期：{{ data_date|default('未指定') }} | 风险状态：{{ risk_state|default('未指定') }}</header>
+<main>{% block content %}{% endblock %}</main>
+<footer>研究用途；不构成投资建议；不承诺收益；不自动下单。</footer>
+</body>
+</html>
