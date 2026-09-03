@@ -1,0 +1,116 @@
+"""Authorized local CSV/Parquet ingestion with immutable content identity."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal
+from pathlib import Path
+from typing import Final
+
+import pandas as pd
+
+
+@dataclass(frozen=True, slots=True)
+class ImportedDataset:
+    source_path: Path
+    content_hash: str
+    rows: tuple[dict[str, object], ...]
+    dataset_type: str | None = None
+    as_of_date: date | None = None
+    available_at: datetime | None = None
+    information_cutoff_at: datetime | None = None
+    version: str | None = None
+
+    @property
+    def content_sha256(self) -> str:
+        return self.content_hash
+
+
+class AuthorizedFileImporter:
+    """Read only an explicitly supplied local file; no supplier/network discovery exists."""
+
+    _suffixes: Final[set[str]] = {".csv", ".parquet"}
+
+    def import_file(
+        self,
+        path: str | Path,
+        *,
+        dataset_type: str | None = None,
+        as_of_date: date | None = None,
+        available_at: datetime | None = None,
+        information_cutoff_at: datetime | None = None,
+        version: str | None = None,
+    ) -> ImportedDataset:
+        source_path = Path(path).expanduser()
+        if not source_path.is_file():
+            raise FileNotFoundError(source_path)
+        if source_path.suffix.lower() not in self._suffixes:
+            raise ValueError("only explicitly supplied .csv and .parquet files are accepted")
+        if available_at is not None and available_at.tzinfo is None:
+            raise ValueError("available_at must be timezone-aware")
+        if information_cutoff_at is not None and information_cutoff_at.tzinfo is None:
+            raise ValueError("information_cutoff_at must be timezone-aware")
+        if (
+            available_at is not None
+            and information_cutoff_at is not None
+            and information_cutoff_at > available_at
+        ):
+            raise ValueError("information_cutoff_at cannot be later than available_at")
+        frame = (
+            pd.read_csv(source_path)
+            if source_path.suffix.lower() == ".csv"
+            else pd.read_parquet(source_path)
+        )
+        rows = tuple(self._record(row) for row in frame.to_dict(orient="records"))
+        return ImportedDataset(
+            source_path=source_path,
+            content_hash=canonical_content_hash(rows),
+            rows=rows,
+            dataset_type=dataset_type,
+            as_of_date=as_of_date,
+            available_at=available_at,
+            information_cutoff_at=information_cutoff_at,
+            version=version,
+        )
+
+    @staticmethod
+    def _record(row: Mapping[str, object]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in row.items():
+            result[str(key)] = None if pd.isna(value) else value
+        return result
+
+
+def canonical_content_hash(rows: tuple[dict[str, object], ...] | list[dict[str, object]]) -> str:
+    """Hash stable logical content, independent of file formatting and field order."""
+    canonical_rows = [_canonical_value(row) for row in rows]
+    canonical_rows.sort(key=lambda row: json.dumps(row, sort_keys=True, separators=(",", ":")))
+    payload = json.dumps(canonical_rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _canonical_value(value: object) -> object:
+    if value is None:
+        return None
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return format(value.normalize(), "f")
+    if isinstance(value, float):
+        return format(Decimal(str(value)).normalize(), "f")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): _canonical_value(item) for key, item in sorted(value.items(), key=lambda item: str(item[0]))}
+    if isinstance(value, (list, tuple)):
+        return [_canonical_value(item) for item in value]
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value).isoformat()
+        except ValueError:
+            return value
+    return str(value)
