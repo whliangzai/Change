@@ -1,0 +1,1 @@
+{% extends "base.html" %}{% block content %}<h1>日报</h1><p>报告日期：{{ report_date|default('未指定') }}；运行号：{{ run_id|default('未加载') }}</p><p>风险状态：{{ risk_state|default('未加载') }}</p>{% endblock %}

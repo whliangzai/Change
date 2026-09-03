@@ -12,8 +12,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from starlette.middleware.base import RequestResponseEndpoint
 
-from app.api import audit, auth, health
+from app.api import auth, health
 from app.api.errors import error_response, register_error_handlers
+from app.api.v1 import admin, backtests, data, operations, strategies
+from app.api.v1.common import InMemoryResearchRepository
 from app.core.config import Settings, load_settings
 from app.core.contracts import (
     AuditWriter,
@@ -80,6 +82,7 @@ def create_app(
     accounts: Mapping[str, LocalAccount] | None = None,
     audit_writer: AuditWriter | None = None,
     idempotency_store: IdempotencyStore | None = None,
+    repository: InMemoryResearchRepository | None = None,
 ) -> FastAPI:
     """Build an application with replaceable process-local adapters for testing."""
     runtime_settings = settings or load_settings()
@@ -91,6 +94,7 @@ def create_app(
     }
     app.state.audit_writer = audit_writer or InMemoryAuditWriter()
     app.state.idempotency_store = idempotency_store or InMemoryIdempotencyStore()
+    app.state.repository = repository or InMemoryResearchRepository()
     app.state.authenticator = LocalAuthenticator(
         accounts=dict(accounts or {}),
         password_hasher=PasswordHasher(),
@@ -188,5 +192,9 @@ def create_app(
 
     app.include_router(health.router)
     app.include_router(auth.router)
-    app.include_router(audit.router)
+    app.include_router(data.router)
+    app.include_router(strategies.router)
+    app.include_router(backtests.router)
+    app.include_router(operations.router)
+    app.include_router(admin.router)
     return app
