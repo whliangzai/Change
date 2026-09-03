@@ -17,7 +17,7 @@ _AUTHORIZATION_BEARER_CREDENTIAL = re.compile(
     re.IGNORECASE,
 )
 _BARE_BEARER_CREDENTIAL = re.compile(
-    r"\bbearer\s+(?=[^\s,;]*[-._~+/=])[A-Za-z0-9._~+/=-]+",
+    r"\bbearer\s+(?!of\b)[A-Za-z0-9._~+/=-]{16,}(?=$|[\s,;])",
     re.IGNORECASE,
 )
 _CREDENTIAL_URL = re.compile(r"(?:postgres(?:ql)?|redis)://[^\s,;]+", re.IGNORECASE)
