@@ -1,0 +1,83 @@
+services:
+  app:
+    build: .
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-development-only-secret-change-me}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      DATA_ROOT: /app/data
+      DATABASE_URL: postgresql+psycopg://money:money@postgres:5432/money
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+    volumes:
+      - money_data_${APP_ENV:-development}:/app/data
+      - money_backups_${APP_ENV:-development}:/app/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build: .
+    command: ["rq", "worker", "--url", "redis://redis:6379/0", "default"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-development-only-secret-change-me}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      DATA_ROOT: /app/data
+      DATABASE_URL: postgresql+psycopg://money:money@postgres:5432/money
+    volumes:
+      - money_data_${APP_ENV:-development}:/app/data
+      - money_backups_${APP_ENV:-development}:/app/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: money
+      POSTGRES_USER: money
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-money-dev-only}
+    volumes:
+      - money_postgres_${APP_ENV:-development}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U money -d money"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - money_redis_${APP_ENV:-development}:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  money_data_development:
+  money_data_test:
+  money_data_simulation:
+  money_backups_development:
+  money_backups_test:
+  money_backups_simulation:
+  money_postgres_development:
+  money_postgres_test:
+  money_postgres_simulation:
+  money_redis_development:
+  money_redis_test:
+  money_redis_simulation:
