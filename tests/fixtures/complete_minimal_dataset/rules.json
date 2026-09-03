@@ -1,0 +1,11 @@
+{
+  "version": "cn-equity-t1-v1",
+  "board_lot": 100,
+  "execution_price_mode": "NEXT_OPEN_ADJUSTED",
+  "buy_sell_mode": "FULL_OR_NONE",
+  "max_investment_ratio": "0.70",
+  "max_positions": 4,
+  "max_single_position_ratio": "0.20",
+  "max_industry_ratio": "0.35",
+  "max_single_trade_risk": "0.01"
+}

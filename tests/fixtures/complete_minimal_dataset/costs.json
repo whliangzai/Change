@@ -1,0 +1,8 @@
+{
+  "version": "cost-v1",
+  "commission_rate": "0.00030",
+  "minimum_commission": "5.00",
+  "stamp_duty_rate": "0.00050",
+  "transfer_fee_rate": "0.00001",
+  "commission_includes_transfer_fee": false
+}

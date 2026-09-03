@@ -1,0 +1,26 @@
+{
+  "manifest_version": "1",
+  "dataset_id": "dataset-v1",
+  "files": [
+    {
+      "path": "bars.csv",
+      "sha256": "0e9a16ccae4120fb2f65f6a422feda9823877de64ae2064ad43f5755e1b82c00"
+    },
+    {
+      "path": "costs.json",
+      "sha256": "69af2eb0db16e95428ed38025fc97ca90cc75bd6b682f411b602b61f12261afa"
+    },
+    {
+      "path": "dataset.json",
+      "sha256": "293fc218fe3965f8ffb89a48ca2715b86222c399e000ebcf5a13ec9de48d1c03"
+    },
+    {
+      "path": "historical_universe.csv",
+      "sha256": "5ce87b8234d869e7648f2cc4c1f89a7865088e938864253e8e98e356949c4e9e"
+    },
+    {
+      "path": "rules.json",
+      "sha256": "7d324588b857059d57309cda9dabf648fd02dd1bab1a9b07605c5cee8451c3b5"
+    }
+  ]
+}
