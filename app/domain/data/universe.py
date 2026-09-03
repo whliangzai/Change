@@ -46,7 +46,9 @@ class HistoricalUniverseSelector:
             reason = (
                 "data_not_available_at_as_of"
                 if not self._available_on_or_before(security, as_of_date)
-                else self._exclusion_reason(security, status, listed_on, open_dates, amounts.get(symbol, []))
+                else self._exclusion_reason(
+                    security, status, listed_on, open_dates, amounts.get(symbol, [])
+                )
             )
             values = sorted(amounts.get(symbol, []))
             median_amount = Decimal(str(median(values))) if values else None
@@ -115,32 +117,48 @@ class HistoricalUniverseSelector:
                 symbol: row
                 for symbol, row in status_history.items()
                 if cls._available_on_or_before(row, as_of_date)
-                and ((effective := cls._date(row.get("effective_date"))) is None or effective <= as_of_date)
+                and (
+                    (effective := cls._date(row.get("effective_date"))) is None
+                    or effective <= as_of_date
+                )
             }
         selected: dict[str, tuple[date, Row]] = {}
         for row in status_history:
             symbol = cls._text(row.get("symbol"))
             effective = cls._date(row.get("effective_date"))
-            if effective is not None and effective <= as_of_date and cls._available_on_or_before(row, as_of_date):
+            if (
+                effective is not None
+                and effective <= as_of_date
+                and cls._available_on_or_before(row, as_of_date)
+            ):
                 prior = selected.get(symbol)
                 if prior is None or effective > prior[0]:
                     selected[symbol] = (effective, row)
         return {symbol: row for symbol, (_, row) in selected.items()}
 
     @classmethod
-    def _amounts_by_symbol(cls, daily_bars: Iterable[Row], as_of_date: date) -> dict[str, list[Decimal]]:
+    def _amounts_by_symbol(
+        cls, daily_bars: Iterable[Row], as_of_date: date
+    ) -> dict[str, list[Decimal]]:
         by_symbol: dict[str, list[tuple[date, Decimal]]] = {}
         for row in daily_bars:
             symbol = cls._text(row.get("symbol"))
             trade_date = cls._date(row.get("trade_date"))
-            if trade_date is None or trade_date > as_of_date or not cls._available_on_or_before(row, as_of_date):
+            if (
+                trade_date is None
+                or trade_date > as_of_date
+                or not cls._available_on_or_before(row, as_of_date)
+            ):
                 continue
             try:
                 amount = Decimal(str(row.get("amount")))
             except (InvalidOperation, ValueError):
                 continue
             by_symbol.setdefault(symbol, []).append((trade_date, amount))
-        return {symbol: [amount for _, amount in sorted(values)[-20:]] for symbol, values in by_symbol.items()}
+        return {
+            symbol: [amount for _, amount in sorted(values)[-20:]]
+            for symbol, values in by_symbol.items()
+        }
 
     @staticmethod
     def _text(value: object) -> str:

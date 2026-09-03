@@ -83,7 +83,8 @@ class StrongTrendStrategy:
         assert feature.return_5d is not None
         assert feature.amount_ratio is not None
         return (
-            feature.trade_date <= (information_cutoff_at.date() if information_cutoff_at else feature.trade_date)
+            feature.trade_date
+            <= (information_cutoff_at.date() if information_cutoff_at else feature.trade_date)
             and feature.market_close > feature.market_ma20
             and feature.close > feature.ma10
             and self.config.min_return_5d <= feature.return_5d <= self.config.max_return_5d
@@ -101,7 +102,11 @@ class StrongTrendStrategy:
         *,
         information_cutoff_at: datetime | None = None,
     ) -> list[EntrySignal]:
-        eligible = [feature for feature in features if self.is_candidate(feature, information_cutoff_at=information_cutoff_at)]
+        eligible = [
+            feature
+            for feature in features
+            if self.is_candidate(feature, information_cutoff_at=information_cutoff_at)
+        ]
         if not eligible:
             return []
         returns5 = [feature.return_5d for feature in eligible if feature.return_5d is not None]
@@ -109,7 +114,11 @@ class StrongTrendStrategy:
         ratios = [feature.amount_ratio for feature in eligible if feature.amount_ratio is not None]
         scored: list[tuple[Decimal, FeatureSnapshot]] = []
         for feature in eligible:
-            assert feature.return_5d is not None and feature.return_20d is not None and feature.amount_ratio is not None
+            assert (
+                feature.return_5d is not None
+                and feature.return_20d is not None
+                and feature.amount_ratio is not None
+            )
             score = Decimal("0.50") * _rank(returns5, feature.return_5d)
             score += Decimal("0.25") * _rank(returns20, feature.return_20d)
             score += Decimal("0.25") * _rank(ratios, feature.amount_ratio)
@@ -124,7 +133,11 @@ class StrongTrendStrategy:
             if count >= self.config.max_per_industry:
                 continue
             industries[feature.industry] = count + 1
-            selected.append(EntrySignal(feature.symbol, feature.trade_date, score, len(selected) + 1, feature.industry))
+            selected.append(
+                EntrySignal(
+                    feature.symbol, feature.trade_date, score, len(selected) + 1, feature.industry
+                )
+            )
         return selected
 
     generate_signals = select_candidates
@@ -145,8 +158,14 @@ class StrongTrendStrategy:
             reasons.append("MAX_HOLDING_DAYS")
         if candidate_count > 0 and rank > Decimal(candidate_count) / Decimal("2"):
             reasons.append("RANK_OUT_OF_POOL")
-        if feature.close is not None and feature.close <= entry_price * (Decimal("1") - self.config.drawdown_exit):
+        if feature.close is not None and feature.close <= entry_price * (
+            Decimal("1") - self.config.drawdown_exit
+        ):
             reasons.append("ENTRY_DRAWDOWN")
         if market_closed_streak >= 2:
             reasons.append("MARKET_SWITCH_OFF")
-        return ExitSignal(feature.symbol, feature.trade_date, next_trade_date, reasons[0]) if reasons else None
+        return (
+            ExitSignal(feature.symbol, feature.trade_date, next_trade_date, reasons[0])
+            if reasons
+            else None
+        )

@@ -41,7 +41,10 @@ class DailyFlow:
         self.export = export
 
     def run(self, trade_date: date, *, account_id: str) -> dict[str, object]:
-        context: dict[str, object] = {"trade_date": trade_date.isoformat(), "account_id": account_id}
+        context: dict[str, object] = {
+            "trade_date": trade_date.isoformat(),
+            "account_id": account_id,
+        }
         if self.ingest is not None:
             context["ingest"] = self.ingest(trade_date, account_id, context)
         for name, stage in (
@@ -144,9 +147,10 @@ class FixtureDailyFlowRunner:
         if existing_run_id is not None:
             return self._runs[existing_run_id]
 
-        dataset = self._json("dataset.json", {
-            "data_version": "dataset-v1", "strategy_version": "trend-continuation-v1"
-        })
+        dataset = self._json(
+            "dataset.json",
+            {"data_version": "dataset-v1", "strategy_version": "trend-continuation-v1"},
+        )
         costs = self._json("costs.json", {"version": "cost-v1"})
         rules = self._json("rules.json", {"version": "cn-equity-t1-v1"})
         bars = self._csv("bars.csv")
@@ -154,25 +158,44 @@ class FixtureDailyFlowRunner:
         as_of_date = request.as_of_date
 
         historical_pool = tuple(
-            sorted({
-                row["symbol"] for row in universe
-                if row.get("trade_date") == as_of_date.isoformat() and row.get("listed") == "true"
-            })
+            sorted(
+                {
+                    row["symbol"]
+                    for row in universe
+                    if row.get("trade_date") == as_of_date.isoformat()
+                    and row.get("listed") == "true"
+                }
+            )
         )
-        signal_symbols = tuple(sorted({
-            row["symbol"] for row in bars
-            if row.get("trade_date") == as_of_date.isoformat()
-            and row.get("status") == "ACTIVE"
-            and row.get("volume") not in {"", "0"}
-            and row["symbol"] in historical_pool
-            and next((u for u in universe if u.get("trade_date") == as_of_date.isoformat() and u.get("symbol") == row["symbol"]), {}).get("tradable") == "true"
-        }))
+        signal_symbols = tuple(
+            sorted(
+                {
+                    row["symbol"]
+                    for row in bars
+                    if row.get("trade_date") == as_of_date.isoformat()
+                    and row.get("status") == "ACTIVE"
+                    and row.get("volume") not in {"", "0"}
+                    and row["symbol"] in historical_pool
+                    and next(
+                        (
+                            u
+                            for u in universe
+                            if u.get("trade_date") == as_of_date.isoformat()
+                            and u.get("symbol") == row["symbol"]
+                        ),
+                        {},
+                    ).get("tradable")
+                    == "true"
+                }
+            )
+        )
         execution_date = self._next_trade_date(bars, as_of_date)
         fills = self._build_fills(execution_date)
         content_hash = self._content_hash()
-        run_id = "run_" + hashlib.sha256(
-            f"{request.idempotency_key}\0{content_hash}".encode()
-        ).hexdigest()[:12]
+        run_id = (
+            "run_"
+            + hashlib.sha256(f"{request.idempotency_key}\0{content_hash}".encode()).hexdigest()[:12]
+        )
         result = FixtureDailyFlowResult(
             run_id=run_id,
             data_version=str(dataset.get("data_version", "dataset-v1")),
@@ -191,8 +214,15 @@ class FixtureDailyFlowRunner:
             ledger=Ledger(),
             daily_report=DailyReport(),
             completed_stages=(
-                "import", "quality", "historical_universe", "signal", "risk",
-                "t_plus_one_plan", "execution", "ledger", "daily_report",
+                "import",
+                "quality",
+                "historical_universe",
+                "signal",
+                "risk",
+                "t_plus_one_plan",
+                "execution",
+                "ledger",
+                "daily_report",
             ),
         )
         self._runs[run_id] = result
@@ -235,14 +265,18 @@ class FixtureDailyFlowRunner:
         if key in self._used_exports:
             raise StateConflictError("export token has already been used")
         self._used_exports.add(key)
-        body = json.dumps({
-            "run_id": result.run_id,
-            "data_version": result.data_version,
-            "strategy_version": result.strategy_version,
-            "cost_version": result.cost_version,
-            "rule_version": result.rule_version,
-            "completed_stages": result.completed_stages,
-        }, default=str, sort_keys=True).encode()
+        body = json.dumps(
+            {
+                "run_id": result.run_id,
+                "data_version": result.data_version,
+                "strategy_version": result.strategy_version,
+                "cost_version": result.cost_version,
+                "rule_version": result.rule_version,
+                "completed_stages": result.completed_stages,
+            },
+            default=str,
+            sort_keys=True,
+        ).encode()
         export_id = "export_" + hashlib.sha256(key[1].encode()).hexdigest()[:12]
         return ExportResult(export_id=export_id, body=body)
 
@@ -268,7 +302,9 @@ class FixtureDailyFlowRunner:
             return list(csv.DictReader(handle))
 
     def _next_trade_date(self, bars: list[dict[str, str]], as_of_date: date) -> date:
-        dates = sorted({date.fromisoformat(row["trade_date"]) for row in bars if row.get("trade_date")})
+        dates = sorted(
+            {date.fromisoformat(row["trade_date"]) for row in bars if row.get("trade_date")}
+        )
         return next((value for value in dates if value > as_of_date), as_of_date)
 
     def _content_hash(self) -> str:
@@ -281,11 +317,59 @@ class FixtureDailyFlowRunner:
 
     def _build_fills(self, execution_date: date) -> tuple[Fill, ...]:
         return (
-            Fill("600001.SZ", execution_date, 100, 100, 100, "10.6212", "NEXT_OPEN_ADJUSTED", "FILLED"),
-            Fill("600003.SZ", execution_date, 100, 100, 0, "8.9260", "NEXT_OPEN_ADJUSTED", "UNFILLED", "SUSPENDED"),
-            Fill("600004.SZ", execution_date, 100, 100, 0, "6.6733", "NEXT_OPEN_ADJUSTED", "UNFILLED", "LIMIT_UP"),
-            Fill("600002.SZ", execution_date, 100, 100, 0, "", "NEXT_OPEN_ADJUSTED", "UNFILLED", "MISSING_PRICE"),
-            Fill("600005.SZ", execution_date, 100, 300, 100, "12.0240", "NEXT_OPEN_ADJUSTED", "PARTIALLY_FILLED"),
+            Fill(
+                "600001.SZ",
+                execution_date,
+                100,
+                100,
+                100,
+                "10.6212",
+                "NEXT_OPEN_ADJUSTED",
+                "FILLED",
+            ),
+            Fill(
+                "600003.SZ",
+                execution_date,
+                100,
+                100,
+                0,
+                "8.9260",
+                "NEXT_OPEN_ADJUSTED",
+                "UNFILLED",
+                "SUSPENDED",
+            ),
+            Fill(
+                "600004.SZ",
+                execution_date,
+                100,
+                100,
+                0,
+                "6.6733",
+                "NEXT_OPEN_ADJUSTED",
+                "UNFILLED",
+                "LIMIT_UP",
+            ),
+            Fill(
+                "600002.SZ",
+                execution_date,
+                100,
+                100,
+                0,
+                "",
+                "NEXT_OPEN_ADJUSTED",
+                "UNFILLED",
+                "MISSING_PRICE",
+            ),
+            Fill(
+                "600005.SZ",
+                execution_date,
+                100,
+                300,
+                100,
+                "12.0240",
+                "NEXT_OPEN_ADJUSTED",
+                "PARTIALLY_FILLED",
+            ),
         )
 
 

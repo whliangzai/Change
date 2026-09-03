@@ -29,7 +29,9 @@ def make_client() -> tuple[TestClient, InMemoryAuditWriter]:
     }
     audit_writer = InMemoryAuditWriter()
     return (
-        TestClient(create_app(settings=TEST_SETTINGS, accounts=accounts, audit_writer=audit_writer)),
+        TestClient(
+            create_app(settings=TEST_SETTINGS, accounts=accounts, audit_writer=audit_writer)
+        ),
         audit_writer,
     )
 

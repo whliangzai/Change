@@ -24,7 +24,10 @@ def test_health_is_dependency_neutral_and_propagates_request_id() -> None:
 
 def test_readiness_reports_named_checks_without_exposing_configuration() -> None:
     client = TestClient(
-        create_app(settings=TEST_SETTINGS, readiness_checks={"database": lambda: True, "queue": lambda: False})
+        create_app(
+            settings=TEST_SETTINGS,
+            readiness_checks={"database": lambda: True, "queue": lambda: False},
+        )
     )
 
     response = client.get("/api/v1/health/readiness")

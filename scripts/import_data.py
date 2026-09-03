@@ -20,7 +20,9 @@ def read_authorized_records(source: str | Path) -> list[dict[str, Any]]:
         raise FileNotFoundError(path)
     if path.suffix.lower() in {".json", ".jsonl"}:
         if path.suffix.lower() == ".jsonl":
-            return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+            return [
+                json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line
+            ]
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, list):
             raise ValueError("JSON import must contain an array")

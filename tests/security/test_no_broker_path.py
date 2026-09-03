@@ -13,9 +13,7 @@ FORBIDDEN_PATH_PARTS = ("broker", "order-submit", "order_submit", "cancel-order"
 
 def test_public_routes_do_not_expose_broker_or_order_submission_operations() -> None:
     routes = {
-        route.path
-        for route in create_app(settings=TEST_SETTINGS).routes
-        if hasattr(route, "path")
+        route.path for route in create_app(settings=TEST_SETTINGS).routes if hasattr(route, "path")
     }
 
     assert not any(

@@ -53,7 +53,9 @@ def _write_benchmark_dataset(source: Path, rows: int = 200_000) -> None:
             )
 
 
-def test_daily_end_reports_elapsed_time_and_peak_memory_for_200k_rows(tmp_path: Path, capsys) -> None:
+def test_daily_end_reports_elapsed_time_and_peak_memory_for_200k_rows(
+    tmp_path: Path, capsys
+) -> None:
     dataset = tmp_path / "benchmark-dataset"
     _write_benchmark_dataset(dataset)
     runner = create_runner(dataset)

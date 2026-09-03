@@ -20,7 +20,10 @@ def create_backtest(payload: BacktestCreate, request: Request, principal: User) 
     if not repository(request).dependencies_available(data):
         raise DataUnavailableError(
             "backtest prerequisites are unavailable",
-            [{"field": field, "reason": "missing or unavailable"} for field in ("data_batch_id", "cost_config_id", "rule_config_id")],
+            [
+                {"field": field, "reason": "missing or unavailable"}
+                for field in ("data_batch_id", "cost_config_id", "rule_config_id")
+            ],
         )
     record = repository(request).create_run(principal.user_id, data)
     audit(request, principal, "BACKTEST_CREATE", "backtest_run", record["run_id"], "SUCCESS")

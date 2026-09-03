@@ -90,9 +90,7 @@ class InMemoryJobRunStore:
             raise KeyError(record.run_id)
 
 
-def make_idempotency_key(
-    job_kind: str, business_date: date, scope: str | None = None
-) -> str:
+def make_idempotency_key(job_kind: str, business_date: date, scope: str | None = None) -> str:
     """Build a stable key; scope is used for distinct backtests or data batches."""
     base = f"{job_kind}:{business_date.isoformat()}"
     return f"{base}:{scope}" if scope else base

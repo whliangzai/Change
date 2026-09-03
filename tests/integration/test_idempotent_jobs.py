@@ -27,9 +27,7 @@ def test_same_key_does_not_duplicate_side_effect() -> None:
         return "report-1"
 
     run_idempotent_task("daily-report", date(2026, 9, 3), write_report, run_store=store)
-    replay = run_idempotent_task(
-        "daily-report", date(2026, 9, 3), write_report, run_store=store
-    )
+    replay = run_idempotent_task("daily-report", date(2026, 9, 3), write_report, run_store=store)
 
     assert replay.value == "report-1"
     assert replay.replayed is True

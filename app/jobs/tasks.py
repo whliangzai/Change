@@ -65,7 +65,9 @@ def validate_data_quality(
     run_store: JobRunStore | None = None,
     audit_writer: AuditWriter | None = None,
 ) -> JobResult:
-    return _run("data-quality", business_date, service, run_store=run_store, audit_writer=audit_writer)
+    return _run(
+        "data-quality", business_date, service, run_store=run_store, audit_writer=audit_writer
+    )
 
 
 def run_daily_report(
@@ -75,7 +77,9 @@ def run_daily_report(
     run_store: JobRunStore | None = None,
     audit_writer: AuditWriter | None = None,
 ) -> JobResult:
-    return _run("daily-report", business_date, service, run_store=run_store, audit_writer=audit_writer)
+    return _run(
+        "daily-report", business_date, service, run_store=run_store, audit_writer=audit_writer
+    )
 
 
 def run_backtest(
@@ -87,7 +91,12 @@ def run_backtest(
     audit_writer: AuditWriter | None = None,
 ) -> JobResult:
     return _run(
-        "backtest", business_date, service, scope=scope, run_store=run_store, audit_writer=audit_writer
+        "backtest",
+        business_date,
+        service,
+        scope=scope,
+        run_store=run_store,
+        audit_writer=audit_writer,
     )
 
 
@@ -100,7 +109,12 @@ def run_backup(
     audit_writer: AuditWriter | None = None,
 ) -> JobResult:
     return _run(
-        "backup", business_date, service, scope=scope, run_store=run_store, audit_writer=audit_writer
+        "backup",
+        business_date,
+        service,
+        scope=scope,
+        run_store=run_store,
+        audit_writer=audit_writer,
     )
 
 

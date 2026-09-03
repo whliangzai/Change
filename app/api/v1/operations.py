@@ -34,8 +34,12 @@ def order_plans(
 
 
 @router.post("/order-plans/{plan_id}/confirm")
-def confirm_plan(plan_id: str, payload: PlanDecision, request: Request, principal: Reviewer) -> JSONResponse:
-    record = repository(request).confirm_plan(plan_id, principal.user_id, payload.decision, payload.expected_version, payload.review_note)
+def confirm_plan(
+    plan_id: str, payload: PlanDecision, request: Request, principal: Reviewer
+) -> JSONResponse:
+    record = repository(request).confirm_plan(
+        plan_id, principal.user_id, payload.decision, payload.expected_version, payload.review_note
+    )
     if record is None:
         raise ApplicationError("NOT_FOUND", "Requested resource was not found", 404)
     audit(request, principal, "ORDER_PLAN_" + payload.decision, "order_plan", plan_id, "SUCCESS")
@@ -44,17 +48,29 @@ def confirm_plan(plan_id: str, payload: PlanDecision, request: Request, principa
 
 @router.post("/executions", status_code=201)
 def create_execution(payload: ExecutionCreate, request: Request, principal: User) -> JSONResponse:
-    record = repository(request).create_execution(payload.model_dump(mode="json"), principal.user_id)
+    record = repository(request).create_execution(
+        payload.model_dump(mode="json"), principal.user_id
+    )
     if record is None:
         raise ApplicationError("NOT_FOUND", "Requested resource was not found", 404)
-    audit(request, principal, "EXECUTION_MANUAL_ENTRY", "execution_record", record["execution_id"], "SUCCESS")
+    audit(
+        request,
+        principal,
+        "EXECUTION_MANUAL_ENTRY",
+        "execution_record",
+        record["execution_id"],
+        "SUCCESS",
+    )
     return _success(request, record, 201)
 
 
 @router.get("/accounts/{account_id}/snapshots")
 def snapshots(
-    account_id: str, request: Request, _: Reader,
-    page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
+    account_id: str,
+    request: Request,
+    _: Reader,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
 ) -> JSONResponse:
     return _success(request, repository(request).snapshots(account_id, page, page_size))
 

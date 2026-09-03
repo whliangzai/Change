@@ -6,7 +6,9 @@ from app.core.config import ConfigurationError, load_settings
 
 
 def test_load_settings_uses_quantitative_guardrail_defaults() -> None:
-    settings = load_settings({"APP_ENV": "test", "AUTH_SECRET_KEY": "test-secret-that-is-long-enough!"})
+    settings = load_settings(
+        {"APP_ENV": "test", "AUTH_SECRET_KEY": "test-secret-that-is-long-enough!"}
+    )
 
     assert settings.data_history_start.isoformat() == "2016-01-01"
     assert settings.benchmark_primary == "000300.SH"

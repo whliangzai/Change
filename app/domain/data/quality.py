@@ -37,11 +37,29 @@ class QualityGate:
     """Validate normalized daily bars without silently changing source values."""
 
     _required_fields: Final[tuple[str, ...]] = (
-        "raw_open", "raw_high", "raw_low", "raw_close", "adjusted_open", "adjusted_high",
-        "adjusted_low", "adjusted_close", "volume", "amount", "adjust_factor",
+        "raw_open",
+        "raw_high",
+        "raw_low",
+        "raw_close",
+        "adjusted_open",
+        "adjusted_high",
+        "adjusted_low",
+        "adjusted_close",
+        "volume",
+        "amount",
+        "adjust_factor",
     )
     _price_fields: Final[frozenset[str]] = frozenset(
-        {"raw_open", "raw_high", "raw_low", "raw_close", "adjusted_open", "adjusted_high", "adjusted_low", "adjusted_close"}
+        {
+            "raw_open",
+            "raw_high",
+            "raw_low",
+            "raw_close",
+            "adjusted_open",
+            "adjusted_high",
+            "adjusted_low",
+            "adjusted_close",
+        }
     )
 
     def validate_daily_bars(self, rows: Iterable[Mapping[str, object]]) -> None:
@@ -70,13 +88,25 @@ class QualityGate:
                 try:
                     parsed = Decimal(str(value))
                     if not parsed.is_finite():
-                        issues.append(QualityIssue(symbol, trade_date, field, "value must be finite"))
+                        issues.append(
+                            QualityIssue(symbol, trade_date, field, "value must be finite")
+                        )
                     elif field in self._price_fields and parsed <= 0:
-                        issues.append(QualityIssue(symbol, trade_date, field, "price must be greater than zero"))
+                        issues.append(
+                            QualityIssue(
+                                symbol, trade_date, field, "price must be greater than zero"
+                            )
+                        )
                     elif field == "adjust_factor" and parsed <= 0:
-                        issues.append(QualityIssue(symbol, trade_date, field, "adjust_factor must be greater than zero"))
+                        issues.append(
+                            QualityIssue(
+                                symbol, trade_date, field, "adjust_factor must be greater than zero"
+                            )
+                        )
                     elif field in {"volume", "amount"} and parsed < 0:
-                        issues.append(QualityIssue(symbol, trade_date, field, "value cannot be negative"))
+                        issues.append(
+                            QualityIssue(symbol, trade_date, field, "value cannot be negative")
+                        )
                 except (InvalidOperation, ValueError):
                     issues.append(QualityIssue(symbol, trade_date, field, "value must be numeric"))
         if issues:
@@ -87,21 +117,32 @@ class QualityGate:
     ) -> None:
         issues: list[QualityIssue] = []
         if available_at.tzinfo is None:
-            issues.append(QualityIssue("<batch>", as_of_date, "available_at", "timezone is required"))
+            issues.append(
+                QualityIssue("<batch>", as_of_date, "available_at", "timezone is required")
+            )
         if information_cutoff_at.tzinfo is None:
             issues.append(
                 QualityIssue("<batch>", as_of_date, "information_cutoff_at", "timezone is required")
             )
-        if available_at.tzinfo is not None and information_cutoff_at.tzinfo is not None and information_cutoff_at > available_at:
+        if (
+            available_at.tzinfo is not None
+            and information_cutoff_at.tzinfo is not None
+            and information_cutoff_at > available_at
+        ):
             issues.append(
                 QualityIssue(
-                    "<batch>", as_of_date, "information_cutoff_at", "cannot be later than available_at"
+                    "<batch>",
+                    as_of_date,
+                    "information_cutoff_at",
+                    "cannot be later than available_at",
                 )
             )
         if issues:
             raise DataQualityError(issues)
 
-    def validate_status_history(self, rows: Iterable[Mapping[str, object]], *, as_of_date: date) -> None:
+    def validate_status_history(
+        self, rows: Iterable[Mapping[str, object]], *, as_of_date: date
+    ) -> None:
         issues = [
             QualityIssue(
                 str(row.get("symbol", "<missing>")),

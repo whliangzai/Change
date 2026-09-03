@@ -123,8 +123,7 @@ class InMemorySessionRegistry:
 
     def is_active(self, session_id: UUID, user_id: UUID) -> bool:
         return (
-            self._sessions.get(session_id) == user_id
-            and session_id not in self._revoked_sessions
+            self._sessions.get(session_id) == user_id and session_id not in self._revoked_sessions
         )
 
     def consume(self, session_id: UUID, user_id: UUID) -> bool:

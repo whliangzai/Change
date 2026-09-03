@@ -50,7 +50,9 @@ class DrawdownMonitor:
         if self.state == DrawdownState.REVIEW_REQUIRED:
             return self.state
         if current_drawdown >= self.stop_threshold:
-            self.audit_events.append(DrawdownAuditEvent("DRAWDOWN_REVIEW_REQUIRED", current_drawdown))
+            self.audit_events.append(
+                DrawdownAuditEvent("DRAWDOWN_REVIEW_REQUIRED", current_drawdown)
+            )
             self.state = DrawdownState.REVIEW_REQUIRED
         elif self.state == DrawdownState.STOP_NEW:
             return self.state
@@ -84,6 +86,8 @@ class DrawdownMonitor:
         if len(self._confirmations) < 2:
             return False
         self.state = DrawdownState.NORMAL
-        self.audit_events.append(DrawdownAuditEvent("DRAWDOWN_RECOVERY_CONFIRMED", Decimal("0"), confirmation_id))
+        self.audit_events.append(
+            DrawdownAuditEvent("DRAWDOWN_RECOVERY_CONFIRMED", Decimal("0"), confirmation_id)
+        )
         self._confirmations.clear()
         return True

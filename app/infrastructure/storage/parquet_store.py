@@ -34,7 +34,9 @@ class ArtifactManifest:
 
 
 def _canonical_row(row: Mapping[str, Any]) -> str:
-    return json.dumps(dict(row), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return json.dumps(
+        dict(row), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+    )
 
 
 def _sha256(path: Path) -> str:
@@ -112,7 +114,10 @@ class ParquetStore:
         if manifest.get("format") == "parquet":
             parquet_module = importlib.import_module("pyarrow.parquet")
             return [dict(row) for row in parquet_module.read_table(path).to_pylist()]
-        return [cast(dict[str, Any], json.loads(line)) for line in path.read_text(encoding="utf-8").splitlines()]
+        return [
+            cast(dict[str, Any], json.loads(line))
+            for line in path.read_text(encoding="utf-8").splitlines()
+        ]
 
 
 def _load_manifest(manifest_path: Path) -> dict[str, Any]:

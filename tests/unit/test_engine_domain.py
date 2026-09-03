@@ -116,49 +116,73 @@ def test_allocation_obeys_cash_limits_and_100_share_lots() -> None:
         limits=limits,
     )
     assert quantity == 100
-    assert allocate_quantity(
-        price=Decimal("201"),
-        cash=Decimal("100"),
-        equity=Decimal("20000"),
-        positions=[],
-        industry="tech",
-        limits=limits,
-    ) == 0
+    assert (
+        allocate_quantity(
+            price=Decimal("201"),
+            cash=Decimal("100"),
+            equity=Decimal("20000"),
+            positions=[],
+            industry="tech",
+            limits=limits,
+        )
+        == 0
+    )
 
 
 def test_allocation_caps_position_by_one_percent_risk_budget() -> None:
-    assert allocate_quantity(
-        price=Decimal("10"),
-        cash=Decimal("20000"),
-        equity=Decimal("20000"),
-        positions=[],
-        industry="tech",
-        stop_distance=Decimal("1"),
-    ) == 200
+    assert (
+        allocate_quantity(
+            price=Decimal("10"),
+            cash=Decimal("20000"),
+            equity=Decimal("20000"),
+            positions=[],
+            industry="tech",
+            stop_distance=Decimal("1"),
+        )
+        == 200
+    )
 
 
 def test_allocation_includes_buy_fees_and_blocks_risky_account_states() -> None:
-    assert allocate_quantity(
-        price=Decimal("30"),
-        cash=Decimal("3500"),
-        equity=Decimal("20000"),
-        positions=[],
-        industry="tech",
-    ) == 100
+    assert (
+        allocate_quantity(
+            price=Decimal("30"),
+            cash=Decimal("3500"),
+            equity=Decimal("20000"),
+            positions=[],
+            industry="tech",
+        )
+        == 100
+    )
     with pytest.raises(ValueError):
         allocate_quantity(
-            price=Decimal("30"), cash=Decimal("3500"), equity=Decimal("20000"), positions=[],
-            industry="tech", financing="MARGIN",
+            price=Decimal("30"),
+            cash=Decimal("3500"),
+            equity=Decimal("20000"),
+            positions=[],
+            industry="tech",
+            financing="MARGIN",
         )
     with pytest.raises(ValueError):
         allocate_quantity(
-            price=Decimal("30"), cash=Decimal("3500"), equity=Decimal("20000"), positions=[],
-            industry="tech", account_type="MARGIN",
+            price=Decimal("30"),
+            cash=Decimal("3500"),
+            equity=Decimal("20000"),
+            positions=[],
+            industry="tech",
+            account_type="MARGIN",
         )
-    assert allocate_quantity(
-        price=Decimal("30"), cash=Decimal("3500"), equity=Decimal("20000"), positions=[],
-        industry="tech", drawdown_state=DrawdownState.STOP_NEW,
-    ) == 0
+    assert (
+        allocate_quantity(
+            price=Decimal("30"),
+            cash=Decimal("3500"),
+            equity=Decimal("20000"),
+            positions=[],
+            industry="tech",
+            drawdown_state=DrawdownState.STOP_NEW,
+        )
+        == 0
+    )
 
 
 def test_review_state_cannot_downgrade_or_auto_recover() -> None:
@@ -173,8 +197,18 @@ def test_drawdown_thresholds_and_manual_two_confirmation_recovery() -> None:
     monitor = DrawdownMonitor()
     assert monitor.observe(Decimal("18800")) == DrawdownState.STOP_NEW
     assert monitor.observe(Decimal("18400")) == DrawdownState.REVIEW_REQUIRED
-    assert monitor.confirm_recovery("review-1", authorized=True, checklist_complete=True, equity=Decimal("20000")) is False
-    assert monitor.confirm_recovery("review-2", authorized=True, checklist_complete=True, equity=Decimal("20000")) is True
+    assert (
+        monitor.confirm_recovery(
+            "review-1", authorized=True, checklist_complete=True, equity=Decimal("20000")
+        )
+        is False
+    )
+    assert (
+        monitor.confirm_recovery(
+            "review-2", authorized=True, checklist_complete=True, equity=Decimal("20000")
+        )
+        is True
+    )
     assert monitor.state == DrawdownState.NORMAL
     assert [event.action for event in monitor.audit_events] == [
         "DRAWDOWN_STOP_NEW",
@@ -192,7 +226,9 @@ def test_execution_costs_and_next_open_adjustment() -> None:
     simulator = ExecutionSimulator(model)
     fill = simulator.execute(
         Order("BUY", "AAA", 100),
-        MarketBar("AAA", date(2026, 1, 21), Decimal("100"), Decimal("99"), Decimal("101"), Decimal("100")),
+        MarketBar(
+            "AAA", date(2026, 1, 21), Decimal("100"), Decimal("99"), Decimal("101"), Decimal("100")
+        ),
     )
     assert fill.status == "FILLED"
     assert fill.price == Decimal("100.200")
@@ -201,21 +237,41 @@ def test_execution_costs_and_next_open_adjustment() -> None:
 def test_execution_rejects_missing_open_limits_and_supports_manual_partial() -> None:
     simulator = ExecutionSimulator(CostModel())
     bar = MarketBar(
-        "AAA", date(2026, 1, 21), Decimal("0"), Decimal("99"), Decimal("101"), Decimal("100"),
+        "AAA",
+        date(2026, 1, 21),
+        Decimal("0"),
+        Decimal("99"),
+        Decimal("101"),
+        Decimal("100"),
         is_suspended=True,
     )
     assert simulator.execute(Order("BUY", "AAA", 100), bar).status == "UNFILLED"
     partial = simulator.execute(
         Order("BUY", "AAA", 100, fill_mode="PARTIAL"),
-        MarketBar("AAA", date(2026, 1, 21), Decimal("100"), Decimal("99"), Decimal("101"), Decimal("100"),
-                  available_quantity=40),
+        MarketBar(
+            "AAA",
+            date(2026, 1, 21),
+            Decimal("100"),
+            Decimal("99"),
+            Decimal("101"),
+            Decimal("100"),
+            available_quantity=40,
+        ),
     )
     assert partial.status == "PARTIALLY_FILLED"
     assert partial.quantity == 40
     with pytest.raises(ValueError):
         simulator.execute(
             Order("BUY", "AAA", 100),
-            MarketBar("AAA", date(2026, 1, 21), Decimal("100"), Decimal("99"), Decimal("101"), Decimal("100"), available_quantity=-1),
+            MarketBar(
+                "AAA",
+                date(2026, 1, 21),
+                Decimal("100"),
+                Decimal("99"),
+                Decimal("101"),
+                Decimal("100"),
+                available_quantity=-1,
+            ),
         )
 
 
@@ -260,11 +316,19 @@ def test_metrics_mark_insufficient_data_unavailable() -> None:
 
 def test_backtest_is_reproducible_and_binds_snapshot_hash() -> None:
     bars = [
-        MarketBar("AAA", date(2026, 1, 20), Decimal("100"), Decimal("99"), Decimal("101"), Decimal("100")),
-        MarketBar("AAA", date(2026, 1, 21), Decimal("101"), Decimal("100"), Decimal("102"), Decimal("101")),
+        MarketBar(
+            "AAA", date(2026, 1, 20), Decimal("100"), Decimal("99"), Decimal("101"), Decimal("100")
+        ),
+        MarketBar(
+            "AAA", date(2026, 1, 21), Decimal("101"), Decimal("100"), Decimal("102"), Decimal("101")
+        ),
     ]
-    config = BacktestConfig(start=date(2026, 1, 20), end=date(2026, 1, 21), initial_equity=Decimal("20000"))
+    config = BacktestConfig(
+        start=date(2026, 1, 20), end=date(2026, 1, 21), initial_equity=Decimal("20000")
+    )
     first = BacktestRunner().run(config, bars, data_version="data-1", strategy_version="strategy-1")
-    second = BacktestRunner().run(config, bars, data_version="data-1", strategy_version="strategy-1")
+    second = BacktestRunner().run(
+        config, bars, data_version="data-1", strategy_version="strategy-1"
+    )
     assert first.snapshot_hash == second.snapshot_hash
     assert first.snapshot.data_version == "data-1"

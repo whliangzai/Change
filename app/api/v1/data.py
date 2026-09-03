@@ -27,6 +27,7 @@ def batch_quality(batch_id: str, request: Request, principal: AnyUser) -> JSONRe
     record = repository(request).get_batch_quality(batch_id, principal.user_id)
     if record is None:
         from app.core.errors import ApplicationError
+
         raise ApplicationError("NOT_FOUND", "Requested resource was not found", 404)
     return _success(request, record)
 

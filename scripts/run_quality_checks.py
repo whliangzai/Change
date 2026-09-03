@@ -55,8 +55,7 @@ def main() -> int:
         checks = [
             (
                 "pytest",
-                ["-m", "pytest", "tests", "--basetemp", pytest_basetemp]
-                + (args.pytest_args or []),
+                ["-m", "pytest", "tests", "--basetemp", pytest_basetemp] + (args.pytest_args or []),
             ),
             ("ruff", ["-m", "ruff", "check", "--no-cache", "app", "tests", "scripts"]),
             ("mypy", ["-m", "mypy", "--cache-dir", cache_dir, "app"]),

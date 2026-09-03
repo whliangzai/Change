@@ -55,7 +55,15 @@ class DataSource(UUIDPrimaryKeyMixin, Base):
 
 class DataBatch(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "data_batch"
-    __table_args__ = (UniqueConstraint("source_id", "dataset_type", "as_of_date", "version", name="uq_data_batch_source_dataset_date_version"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id",
+            "dataset_type",
+            "as_of_date",
+            "version",
+            name="uq_data_batch_source_dataset_date_version",
+        ),
+    )
     source_id: Mapped[UUID] = mapped_column(ForeignKey("data_source.id"), nullable=False)
     dataset_type: Mapped[str] = mapped_column(String(32), nullable=False)
     as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -105,7 +113,11 @@ class IndustryMembershipHistory(Base):
     effective_from: Mapped[date] = mapped_column(Date, primary_key=True)
     effective_to: Mapped[date | None] = mapped_column(Date)
     source_batch_id: Mapped[UUID] = mapped_column(ForeignKey("data_batch.id"), nullable=False)
-    __table_args__ = (Index("ix_industry_membership_history_dates", "security_id", "effective_from", "effective_to"),)
+    __table_args__ = (
+        Index(
+            "ix_industry_membership_history_dates", "security_id", "effective_from", "effective_to"
+        ),
+    )
 
 
 class DailyBar(Base):
@@ -167,7 +179,10 @@ class CostConfigVersion(UUIDPrimaryKeyMixin, Base):
 
 class StrategyVersion(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "strategy_version"
-    __table_args__ = (UniqueConstraint("code", "version", name="uq_strategy_code_version"), Index("ix_strategy_version_status", "status"))
+    __table_args__ = (
+        UniqueConstraint("code", "version", name="uq_strategy_code_version"),
+        Index("ix_strategy_version_status", "status"),
+    )
     code: Mapped[str] = mapped_column(String(64), nullable=False)
     version: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -179,8 +194,19 @@ class StrategyVersion(UUIDPrimaryKeyMixin, Base):
 
 class SignalSnapshot(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "signal_snapshot"
-    __table_args__ = (UniqueConstraint("strategy_version_id", "data_batch_id", "as_of_date", "security_id", name="uq_signal_snapshot_input"), Index("ix_signal_snapshot_date_score", "as_of_date", "score"))
-    strategy_version_id: Mapped[UUID] = mapped_column(ForeignKey("strategy_version.id"), nullable=False)
+    __table_args__ = (
+        UniqueConstraint(
+            "strategy_version_id",
+            "data_batch_id",
+            "as_of_date",
+            "security_id",
+            name="uq_signal_snapshot_input",
+        ),
+        Index("ix_signal_snapshot_date_score", "as_of_date", "score"),
+    )
+    strategy_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("strategy_version.id"), nullable=False
+    )
     data_batch_id: Mapped[UUID] = mapped_column(ForeignKey("data_batch.id"), nullable=False)
     as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
     information_cutoff_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -195,16 +221,24 @@ class BacktestRun(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "backtest_run"
     run_no: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     data_batch_id: Mapped[UUID] = mapped_column(ForeignKey("data_batch.id"), nullable=False)
-    strategy_version_id: Mapped[UUID] = mapped_column(ForeignKey("strategy_version.id"), nullable=False)
-    cost_config_id: Mapped[UUID] = mapped_column(ForeignKey("cost_config_version.id"), nullable=False)
-    rule_config_id: Mapped[UUID] = mapped_column(ForeignKey("rule_config_version.id"), nullable=False)
+    strategy_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("strategy_version.id"), nullable=False
+    )
+    cost_config_id: Mapped[UUID] = mapped_column(
+        ForeignKey("cost_config_version.id"), nullable=False
+    )
+    rule_config_id: Mapped[UUID] = mapped_column(
+        ForeignKey("rule_config_version.id"), nullable=False
+    )
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
     train_end: Mapped[date | None] = mapped_column(Date)
     valid_end: Mapped[date | None] = mapped_column(Date)
     oos_start: Mapped[date | None] = mapped_column(Date)
     benchmark_symbol: Mapped[str] = mapped_column(String(16), nullable=False, default="000300.SH")
-    secondary_benchmark_symbol: Mapped[str] = mapped_column(String(16), nullable=False, default="000001.SH")
+    secondary_benchmark_symbol: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="000001.SH"
+    )
     universe_benchmark_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     execution_price_mode: Mapped[str] = mapped_column(String(32), nullable=False)
     initial_equity: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False)
@@ -229,7 +263,12 @@ class RunStage(UUIDPrimaryKeyMixin, Base):
 
 class PortfolioSnapshot(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "portfolio_snapshot"
-    __table_args__ = (UniqueConstraint("run_id", "account_id", "trade_date", name="uq_portfolio_snapshot_run_account_date"), Index("ix_portfolio_snapshot_trade_date", "trade_date"))
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "account_id", "trade_date", name="uq_portfolio_snapshot_run_account_date"
+        ),
+        Index("ix_portfolio_snapshot_trade_date", "trade_date"),
+    )
     run_id: Mapped[UUID] = mapped_column(ForeignKey("backtest_run.id"), nullable=False)
     account_id: Mapped[UUID] = mapped_column(ForeignKey("user_account.id"), nullable=False)
     trade_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -243,8 +282,14 @@ class PortfolioSnapshot(UUIDPrimaryKeyMixin, Base):
 
 class PositionSnapshot(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "position_snapshot"
-    __table_args__ = (UniqueConstraint("portfolio_snapshot_id", "security_id", name="uq_position_snapshot_security"),)
-    portfolio_snapshot_id: Mapped[UUID] = mapped_column(ForeignKey("portfolio_snapshot.id"), nullable=False)
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_snapshot_id", "security_id", name="uq_position_snapshot_security"
+        ),
+    )
+    portfolio_snapshot_id: Mapped[UUID] = mapped_column(
+        ForeignKey("portfolio_snapshot.id"), nullable=False
+    )
     security_id: Mapped[UUID] = mapped_column(ForeignKey("security.id"), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     available_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -255,7 +300,11 @@ class PositionSnapshot(UUIDPrimaryKeyMixin, Base):
 
 class OrderPlan(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "order_plan"
-    __table_args__ = (UniqueConstraint("plan_no", name="uq_order_plan_no"), UniqueConstraint("idempotency_key", name="uq_order_plan_idempotency_key"), Index("ix_order_plan_execution_status", "execution_date", "status"))
+    __table_args__ = (
+        UniqueConstraint("plan_no", name="uq_order_plan_no"),
+        UniqueConstraint("idempotency_key", name="uq_order_plan_idempotency_key"),
+        Index("ix_order_plan_execution_status", "execution_date", "status"),
+    )
     plan_no: Mapped[str] = mapped_column(String(64), nullable=False)
     run_id: Mapped[UUID] = mapped_column(ForeignKey("backtest_run.id"), nullable=False)
     as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -307,7 +356,11 @@ class LedgerEntry(UUIDPrimaryKeyMixin, Base):
 
 class PerformanceMetric(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "performance_metric"
-    __table_args__ = (UniqueConstraint("run_id", "segment", "metric_code", name="uq_performance_metric_run_segment_code"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "segment", "metric_code", name="uq_performance_metric_run_segment_code"
+        ),
+    )
     run_id: Mapped[UUID] = mapped_column(ForeignKey("backtest_run.id"), nullable=False)
     segment: Mapped[str] = mapped_column(String(16), nullable=False)
     metric_code: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -339,7 +392,9 @@ class DailyReport(UUIDPrimaryKeyMixin, Base):
 
 class JobRun(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "job_run"
-    __table_args__ = (UniqueConstraint("job_code", "idempotency_key", name="uq_job_run_job_idempotency"),)
+    __table_args__ = (
+        UniqueConstraint("job_code", "idempotency_key", name="uq_job_run_job_idempotency"),
+    )
     job_code: Mapped[str] = mapped_column(String(32), nullable=False)
     business_date: Mapped[date] = mapped_column(Date, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -362,7 +417,10 @@ class AuditEvent(UUIDPrimaryKeyMixin, Base):
     after_digest: Mapped[str | None] = mapped_column(Text)
     request_id: Mapped[str] = mapped_column(String(64), nullable=False)
     result: Mapped[str] = mapped_column(String(16), nullable=False)
-    __table_args__ = (Index("ix_audit_event_object_time", "object_type", "object_id", "occurred_at"), Index("ix_audit_event_actor_time", "actor_user_id", "occurred_at"))
+    __table_args__ = (
+        Index("ix_audit_event_object_time", "object_type", "object_id", "occurred_at"),
+        Index("ix_audit_event_actor_time", "actor_user_id", "occurred_at"),
+    )
 
 
 class SystemAlert(UUIDPrimaryKeyMixin, Base):

@@ -105,12 +105,12 @@ def create_app(
     register_error_handlers(app)
 
     @app.middleware("http")
-    async def request_context(
-        request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def request_context(request: Request, call_next: RequestResponseEndpoint) -> Response:
         supplied_request_id = request.headers.get("X-Request-Id", "")
         request_id = (
-            supplied_request_id if _REQUEST_ID.fullmatch(supplied_request_id) else f"req_{uuid4().hex}"
+            supplied_request_id
+            if _REQUEST_ID.fullmatch(supplied_request_id)
+            else f"req_{uuid4().hex}"
         )
         request.state.request_id = request_id
         try:
@@ -133,7 +133,12 @@ def create_app(
                     key=idempotency_key,
                     request_hash=sha256(
                         b"\0".join(
-                            [request.method.encode(), request.url.path.encode(), body, actor_id.encode()]
+                            [
+                                request.method.encode(),
+                                request.url.path.encode(),
+                                body,
+                                actor_id.encode(),
+                            ]
                         )
                     ).hexdigest(),
                     actor_id=actor_id,
@@ -168,9 +173,7 @@ def create_app(
                     [chunk async for chunk in streaming_response.body_iterator]
                 )
                 content_type = response.media_type or response.headers.get("content-type")
-                response_body = _with_current_request_id(
-                    response_body, content_type, request_id
-                )
+                response_body = _with_current_request_id(response_body, content_type, request_id)
                 response_headers = _safe_replay_headers(response.headers)
                 response = Response(
                     content=response_body,

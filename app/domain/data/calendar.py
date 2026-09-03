@@ -32,7 +32,9 @@ class TradeCalendar:
         open_dates = [day for day in sorted_dates if flags.get(day, True)]
         result: list[CalendarDay] = []
         for day in sorted_dates:
-            previous = next((candidate for candidate in reversed(open_dates) if candidate < day), None)
+            previous = next(
+                (candidate for candidate in reversed(open_dates) if candidate < day), None
+            )
             following = next((candidate for candidate in open_dates if candidate > day), None)
             result.append(CalendarDay(exchange, day, flags.get(day, True), previous, following))
         return result

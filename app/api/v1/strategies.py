@@ -19,12 +19,21 @@ Reviewer = Annotated[Principal, Depends(require_roles(Role.REVIEWER, Role.ADMIN)
 @router.post("/strategies", status_code=201)
 def create_strategy(payload: StrategyCreate, request: Request, principal: User) -> JSONResponse:
     record = repository(request).create_strategy(principal.user_id, payload.model_dump(mode="json"))
-    audit(request, principal, "STRATEGY_CREATE", "strategy_version", record["strategy_version_id"], "SUCCESS")
+    audit(
+        request,
+        principal,
+        "STRATEGY_CREATE",
+        "strategy_version",
+        record["strategy_version_id"],
+        "SUCCESS",
+    )
     return _success(request, record, 201)
 
 
 @router.post("/strategies/{strategy_id}/submit-review")
-def submit_review(strategy_id: str, payload: StrategyReview, request: Request, principal: Reviewer) -> JSONResponse:
+def submit_review(
+    strategy_id: str, payload: StrategyReview, request: Request, principal: Reviewer
+) -> JSONResponse:
     record = repository(request).submit_strategy(
         strategy_id, principal.user_id, payload.decision, payload.review_note, allow_reviewer=True
     )

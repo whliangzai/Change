@@ -84,15 +84,38 @@ class BacktestRunner:
     ) -> BacktestResult:
         if config.execution_mode != "NEXT_OPEN_ADJUSTED" or config.fill_mode != "FULL_OR_NONE":
             raise ValueError("backtest requires NEXT_OPEN_ADJUSTED and FULL_OR_NONE")
-        ordered = sorted((bar for bar in bars if config.start <= bar.trade_date <= config.end), key=lambda bar: (bar.trade_date, bar.symbol))
+        ordered = sorted(
+            (bar for bar in bars if config.start <= bar.trade_date <= config.end),
+            key=lambda bar: (bar.trade_date, bar.symbol),
+        )
         order_payload = {
             trade_date.isoformat(): [asdict(order) for order in day_orders]
             for trade_date, day_orders in sorted((orders or {}).items())
         }
         raw_payload = {"bars": [asdict(bar) for bar in ordered], "orders": order_payload}
-        raw = input_hash or hashlib.sha256(json.dumps(raw_payload, default=_json_default, sort_keys=True).encode()).hexdigest()
-        snapshot = RunSnapshot(data_version, strategy_version, self.cost_model.version, config.benchmark, config.start, config.end, config.training_end, config.validation_end, raw, config.initial_equity, config.execution_mode, config.fill_mode)
-        snapshot_hash = hashlib.sha256(json.dumps(asdict(snapshot), default=_json_default, sort_keys=True).encode()).hexdigest()
+        raw = (
+            input_hash
+            or hashlib.sha256(
+                json.dumps(raw_payload, default=_json_default, sort_keys=True).encode()
+            ).hexdigest()
+        )
+        snapshot = RunSnapshot(
+            data_version,
+            strategy_version,
+            self.cost_model.version,
+            config.benchmark,
+            config.start,
+            config.end,
+            config.training_end,
+            config.validation_end,
+            raw,
+            config.initial_equity,
+            config.execution_mode,
+            config.fill_mode,
+        )
+        snapshot_hash = hashlib.sha256(
+            json.dumps(asdict(snapshot), default=_json_default, sort_keys=True).encode()
+        ).hexdigest()
         ledger = PortfolioLedger(initial_cash=config.initial_equity)
         simulator = ExecutionSimulator(self.cost_model)
         by_date: dict[date, list[MarketBar]] = {}
@@ -111,20 +134,39 @@ class BacktestRunner:
             for order in (orders or {}).get(trade_date, ()):
                 order_bar = bars_by_symbol.get(order.symbol)
                 if order_bar is None:
-                    skipped_orders.append(SkippedOrder(trade_date, order.symbol, "MISSING_EXECUTION_BAR"))
+                    skipped_orders.append(
+                        SkippedOrder(trade_date, order.symbol, "MISSING_EXECUTION_BAR")
+                    )
                     continue
                 if order.signal_date is None:
-                    skipped_orders.append(SkippedOrder(trade_date, order.symbol, "MISSING_SIGNAL_DATE"))
+                    skipped_orders.append(
+                        SkippedOrder(trade_date, order.symbol, "MISSING_SIGNAL_DATE")
+                    )
                     continue
                 if order.signal_date >= trade_date:
-                    skipped_orders.append(SkippedOrder(trade_date, order.symbol, "SIGNAL_DATE_NOT_BEFORE_EXECUTION"))
+                    skipped_orders.append(
+                        SkippedOrder(trade_date, order.symbol, "SIGNAL_DATE_NOT_BEFORE_EXECUTION")
+                    )
                     continue
                 backtest_order = replace(order, fill_mode=config.fill_mode)
                 fill = simulator.execute(backtest_order, order_bar)
-                if fill.status in {"FILLED", "PARTIALLY_FILLED"} and fill.price is not None and fill.costs is not None:
-                    ledger.apply_fill(fill.side, fill.symbol, fill.quantity, fill.price, fill.costs.total)
+                if (
+                    fill.status in {"FILLED", "PARTIALLY_FILLED"}
+                    and fill.price is not None
+                    and fill.costs is not None
+                ):
+                    ledger.apply_fill(
+                        fill.side, fill.symbol, fill.quantity, fill.price, fill.costs.total
+                    )
             day_snapshot = ledger.snapshot(prices=last_closes)
             ledger_snapshots.append(day_snapshot)
             equity_values.append(day_snapshot.equity)
         equity = tuple(equity_values)
-        return BacktestResult(snapshot, snapshot_hash, equity, calculate_metrics(equity), tuple(ledger_snapshots), tuple(skipped_orders))
+        return BacktestResult(
+            snapshot,
+            snapshot_hash,
+            equity,
+            calculate_metrics(equity),
+            tuple(ledger_snapshots),
+            tuple(skipped_orders),
+        )

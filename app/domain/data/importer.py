@@ -105,7 +105,10 @@ def _canonical_value(value: object) -> object:
     if isinstance(value, int) and not isinstance(value, bool):
         return str(value)
     if isinstance(value, dict):
-        return {str(key): _canonical_value(item) for key, item in sorted(value.items(), key=lambda item: str(item[0]))}
+        return {
+            str(key): _canonical_value(item)
+            for key, item in sorted(value.items(), key=lambda item: str(item[0]))
+        }
     if isinstance(value, (list, tuple)):
         return [_canonical_value(item) for item in value]
     if isinstance(value, str):

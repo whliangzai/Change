@@ -30,7 +30,9 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def create_backup(source: str | Path, destination: str | Path, backup_id: str | None = None) -> BackupManifest:
+def create_backup(
+    source: str | Path, destination: str | Path, backup_id: str | None = None
+) -> BackupManifest:
     source_path = Path(source).resolve()
     destination_path = Path(destination).resolve()
     if not source_path.is_dir():
@@ -46,7 +48,13 @@ def create_backup(source: str | Path, destination: str | Path, backup_id: str | 
         target = backup_dir / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_file, target)
-        entries.append({"path": relative.as_posix(), "size_bytes": target.stat().st_size, "sha256": _sha256(target)})
+        entries.append(
+            {
+                "path": relative.as_posix(),
+                "size_bytes": target.stat().st_size,
+                "sha256": _sha256(target),
+            }
+        )
     manifest = BackupManifest(
         backup_id=stamp,
         source=str(source_path),

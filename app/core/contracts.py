@@ -84,7 +84,9 @@ class InMemoryIdempotencyStore:
                 or existing.actor_id != request.actor_id
                 or existing.path != request.path
             ):
-                raise IdempotencyConflictError("Idempotency-Key was already used for another request")
+                raise IdempotencyConflictError(
+                    "Idempotency-Key was already used for another request"
+                )
             result = self._results.get(request.key)
             if result is None:
                 raise StateConflictError("A matching idempotent request is still in progress")

@@ -61,13 +61,24 @@ def build_feature_snapshot(
     The function deliberately returns missing features instead of inventing values when
     history is too short. Callers can therefore make data availability explicit.
     """
+
     def available(bar: DailyBar) -> bool:
         return information_cutoff_at is None or (
             bar.available_at is not None and bar.available_at <= information_cutoff_at
         )
 
-    stock = sorted((bar for bar in bars if bar.symbol == symbol and bar.trade_date <= trade_date and available(bar)), key=lambda b: b.trade_date)
-    market = sorted((bar for bar in market_bars if bar.trade_date <= trade_date and available(bar)), key=lambda b: b.trade_date)
+    stock = sorted(
+        (
+            bar
+            for bar in bars
+            if bar.symbol == symbol and bar.trade_date <= trade_date and available(bar)
+        ),
+        key=lambda b: b.trade_date,
+    )
+    market = sorted(
+        (bar for bar in market_bars if bar.trade_date <= trade_date and available(bar)),
+        key=lambda b: b.trade_date,
+    )
     current = next((bar for bar in reversed(stock) if bar.trade_date == trade_date), None)
     if current is None:
         return FeatureSnapshot(symbol, trade_date, None, None, None, None, None, None, None, False)
@@ -80,7 +91,9 @@ def build_feature_snapshot(
     return_20d = closes[-1] / closes[-21] - 1 if len(closes) >= 21 else None
     avg5 = _mean(amounts[-5:]) if len(amounts) >= 5 else None
     avg20 = _mean(amounts[-20:]) if len(amounts) >= 20 else None
-    ratio = avg5 / avg20 if avg5 is not None and avg20 is not None and avg20 != Decimal("0") else None
+    ratio = (
+        avg5 / avg20 if avg5 is not None and avg20 is not None and avg20 != Decimal("0") else None
+    )
     market_current = next((bar for bar in reversed(market) if bar.trade_date == trade_date), None)
     return FeatureSnapshot(
         symbol=symbol,

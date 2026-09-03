@@ -107,7 +107,9 @@ def test_refresh_token_is_consumed_atomically_when_two_callers_race() -> None:
         token_service=TokenService("test-secret-that-is-long-enough!"),
         sessions=BarrierSessionRegistry(),
     )
-    refresh_token = authenticator.login(account.username, "correct horse battery staple").refresh_token
+    refresh_token = authenticator.login(
+        account.username, "correct horse battery staple"
+    ).refresh_token
 
     def refresh_once() -> bool:
         barrier.wait()
