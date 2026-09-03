@@ -71,6 +71,26 @@ def test_structured_logs_redact_opaque_alphanumeric_bearer_tokens() -> None:
     assert "***" in rendered
 
 
+def test_structured_logs_redact_short_opaque_bearer_tokens() -> None:
+    formatter = StructuredJsonFormatter()
+    record = logging.LogRecord(
+        "test",
+        logging.ERROR,
+        __file__,
+        1,
+        "bearer abc123",
+        (),
+        None,
+    )
+    record.exc_text = "bearer z9Y8x7"
+
+    rendered = formatter.format(record)
+
+    assert "abc123" not in rendered
+    assert "z9Y8x7" not in rendered
+    assert "***" in rendered
+
+
 def test_structured_logs_preserve_bearer_as_an_ordinary_word() -> None:
     formatter = StructuredJsonFormatter()
     record = logging.LogRecord(
