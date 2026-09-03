@@ -8,6 +8,22 @@ dependencies = [
   "uvicorn>=0.30,<1.0",
   "argon2-cffi>=23.1,<24.0",
   "PyJWT>=2.9,<3.0",
+  "SQLAlchemy>=2.0,<3.0",
+  "alembic>=1.13,<2.0",
+  "psycopg[binary]>=3.2,<4.0",
+  "pandas>=2.2,<3.0",
+  "pyarrow>=17,<22",
+  "redis>=5.2,<7.0",
+  "rq>=2.1,<3.0",
+  "Jinja2>=3.1,<4.0",
+  "pydantic-settings>=2.6,<3.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3,<9.0",
+  "ruff>=0.8,<1.0",
+  "mypy>=1.13,<2.0",
 ]
 
 [tool.pytest.ini_options]
@@ -27,5 +43,5 @@ strict = true
 packages = ["app"]
 
 [[tool.mypy.overrides]]
-module = ["jwt", "argon2.*"]
+module = ["jwt", "argon2.*", "pandas"]
 ignore_missing_imports = true
