@@ -1,5 +1,6 @@
 """FastAPI application factory for the local validation runtime."""
 
+import json
 import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
@@ -33,6 +34,42 @@ from app.core.security import (
 )
 
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}\Z")
+_REPLAY_UNSAFE_HEADERS = {
+    "connection",
+    "content-length",
+    "content-type",
+    "date",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "server",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    "x-request-id",
+}
+
+
+def _safe_replay_headers(headers: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
+    return tuple(
+        (name, value)
+        for name, value in headers.items()
+        if name.lower() not in _REPLAY_UNSAFE_HEADERS
+    )
+
+
+def _with_current_request_id(body: bytes, content_type: str | None, request_id: str) -> bytes:
+    if content_type is None or "application/json" not in content_type.lower():
+        return body
+    try:
+        payload = json.loads(body)
+    except (TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        return body
+    if not isinstance(payload, dict) or "request_id" not in payload:
+        return body
+    payload["request_id"] = request_id
+    return json.dumps(payload, separators=(",", ":")).encode()
 
 
 def create_app(
@@ -100,10 +137,14 @@ def create_app(
                 )
                 replay = app.state.idempotency_store.acquire(idempotency_request)
                 if replay is not None:
+                    replay_body = _with_current_request_id(
+                        replay.body, replay.content_type, request_id
+                    )
                     response = Response(
-                        content=replay.body,
+                        content=replay_body,
                         status_code=replay.status_code,
                         media_type=replay.content_type,
+                        headers=dict(replay.headers),
                     )
                     response.headers["X-Request-Id"] = request_id
                     return response
@@ -121,14 +162,25 @@ def create_app(
                 response_body = b"".join(
                     [chunk async for chunk in streaming_response.body_iterator]
                 )
+                content_type = response.media_type or response.headers.get("content-type")
+                response_body = _with_current_request_id(
+                    response_body, content_type, request_id
+                )
+                response_headers = _safe_replay_headers(response.headers)
                 response = Response(
                     content=response_body,
                     status_code=response.status_code,
-                    media_type=response.media_type,
+                    media_type=content_type,
+                    headers=dict(response_headers),
                 )
                 app.state.idempotency_store.complete(
                     idempotency_request,
-                    IdempotencyResult(response.status_code, response_body, response.media_type),
+                    IdempotencyResult(
+                        response.status_code,
+                        response_body,
+                        content_type,
+                        response_headers,
+                    ),
                 )
         response.headers["X-Request-Id"] = request_id
         return response

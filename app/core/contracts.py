@@ -52,6 +52,7 @@ class IdempotencyResult:
     status_code: int
     body: bytes
     content_type: str | None
+    headers: tuple[tuple[str, str], ...]
 
 
 class IdempotencyStore(Protocol):

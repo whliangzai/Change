@@ -134,7 +134,9 @@ def test_mutating_requests_replay_identical_results_and_reject_key_reuse_with_ne
 
     assert first.status_code == 200
     assert replay.status_code == 200
-    assert replay.json() == first.json()
+    assert replay.json()["data"] == first.json()["data"]
+    assert first.json()["request_id"] == first.headers["X-Request-Id"]
+    assert replay.json()["request_id"] == replay.headers["X-Request-Id"]
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
     assert len(audit_writer.events) == 1
