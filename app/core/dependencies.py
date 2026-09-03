@@ -1,7 +1,6 @@
 """FastAPI dependencies for authenticated, auditable operations."""
 
-from collections.abc import Callable
-from typing import Annotated
+from typing import Annotated, Protocol
 
 from fastapi import Depends, Header, Request
 
@@ -35,7 +34,11 @@ def get_current_principal(
     return authenticator.authenticate_access_token(authorization.removeprefix("Bearer "))
 
 
-def require_roles(*roles: Role) -> Callable[[Principal], Principal]:
+class RoleDependency(Protocol):
+    def __call__(self, principal: Principal, authenticator: LocalAuthenticator) -> Principal: ...
+
+
+def require_roles(*roles: Role) -> RoleDependency:
     def dependency(
         principal: Annotated[Principal, Depends(get_current_principal)],
         authenticator: Annotated[LocalAuthenticator, Depends(get_authenticator)],

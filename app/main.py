@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
+from starlette.middleware.base import RequestResponseEndpoint
 
 from app.api import audit, auth, health
 from app.api.errors import error_response, register_error_handlers
@@ -101,7 +102,7 @@ def create_app(
 
     @app.middleware("http")
     async def request_context(
-        request: Request, call_next: Callable[[Request], Response]
+        request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         supplied_request_id = request.headers.get("X-Request-Id", "")
         request_id = (

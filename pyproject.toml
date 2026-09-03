@@ -25,7 +25,6 @@ ignore = ["B008", "E501", "SIM300"]
 python_version = "3.12"
 strict = true
 packages = ["app"]
-disable_error_code = ["arg-type", "assignment", "return-value", "misc"]
 
 [[tool.mypy.overrides]]
 module = ["jwt", "argon2.*"]

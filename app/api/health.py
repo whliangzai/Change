@@ -9,7 +9,7 @@ ReadinessCheck = Callable[[], bool]
 router = APIRouter(tags=["health"])
 
 
-def _success(request: Request, data: dict[str, object], status_code: int = 200) -> JSONResponse:
+def _success(request: Request, data: Mapping[str, object], status_code: int = 200) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content={"data": data, "request_id": request.state.request_id},

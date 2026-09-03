@@ -1,5 +1,8 @@
 """HTTP serialization for domain and authentication errors."""
 
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -9,7 +12,11 @@ from app.core.security import AccessDeniedError, AuthenticationError
 
 
 def error_response(
-    request: Request, status_code: int, code: str, message: str, details: list[object] | None = None
+    request: Request,
+    status_code: int,
+    code: str,
+    message: str,
+    details: Sequence[Mapping[str, Any]] | None = None,
 ) -> JSONResponse:
     request_id = getattr(request.state, "request_id", "unknown")
     return JSONResponse(
