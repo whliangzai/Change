@@ -1,0 +1,9 @@
+trade_date,symbol,listed,tradable,st_flag,delisted_on,industry
+2024-01-04,600001.SZ,true,true,false,,TECH
+2024-01-04,600002.SZ,true,true,false,2024-01-06,FINANCE
+2024-01-04,600003.SZ,true,true,true,,TECH
+2024-01-04,600004.SZ,true,true,false,,HEALTH
+2024-01-05,600001.SZ,true,true,false,,TECH
+2024-01-05,600002.SZ,true,false,false,2024-01-06,FINANCE
+2024-01-05,600003.SZ,true,false,true,,TECH
+2024-01-05,600004.SZ,true,true,false,,HEALTH
