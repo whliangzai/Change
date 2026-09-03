@@ -3,6 +3,7 @@
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from threading import Lock
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -105,6 +106,7 @@ class InMemorySessionRegistry:
     def __init__(self) -> None:
         self._sessions: dict[UUID, UUID] = {}
         self._revoked_sessions: set[UUID] = set()
+        self._lock = Lock()
 
     def create(self, user_id: UUID) -> UUID:
         session_id = uuid4()
@@ -124,6 +126,13 @@ class InMemorySessionRegistry:
             self._sessions.get(session_id) == user_id
             and session_id not in self._revoked_sessions
         )
+
+    def consume(self, session_id: UUID, user_id: UUID) -> bool:
+        with self._lock:
+            if not self.is_active(session_id, user_id):
+                return False
+            self._revoked_sessions.add(session_id)
+            return True
 
 
 class LocalAuthenticator:
@@ -157,8 +166,9 @@ class LocalAuthenticator:
     def refresh(self, refresh_token: str) -> TokenPair:
         claims = self._token_service.decode(refresh_token, "refresh")
         principal = self._principal_from_claims(claims)
+        if not self._sessions.consume(principal.session_id, principal.user_id):
+            raise AuthenticationError("refresh token was already consumed")
         account = self._accounts[principal.username]
-        self._sessions.revoke(principal.session_id)
         return self._token_service.issue(account, self._sessions.create(account.id))
 
     def logout(self, refresh_token: str) -> None:
@@ -175,6 +185,13 @@ class LocalAuthenticator:
     def revoke_user_sessions(self, user_id: UUID) -> None:
         self._sessions.revoke_user(user_id)
 
+    def set_roles(self, user_id: UUID, roles: frozenset[Role]) -> None:
+        for username, account in self._accounts.items():
+            if account.id == user_id:
+                self._accounts[username] = replace(account, roles=roles)
+                return
+        raise AuthenticationError("account not found")
+
     def require_roles(self, principal: Principal, *roles: Role) -> None:
         if not any(role in principal.roles for role in roles):
             raise AccessDeniedError("insufficient role")
@@ -184,7 +201,7 @@ class LocalAuthenticator:
             user_id = UUID(str(claims["sub"]))
             session_id = UUID(str(claims["sid"]))
             username = str(claims["username"])
-            roles = frozenset(Role(role) for role in claims["roles"])
+            frozenset(Role(role) for role in claims["roles"])
         except (KeyError, TypeError, ValueError) as exc:
             raise AuthenticationError("invalid token claims") from exc
         account = self._accounts.get(username)
@@ -192,7 +209,7 @@ class LocalAuthenticator:
             raise AuthenticationError("account is unavailable")
         if not self._sessions.is_active(session_id, user_id):
             raise AuthenticationError("session is revoked")
-        return Principal(user_id, username, roles, session_id)
+        return Principal(user_id, username, account.roles, session_id)
 
     def _set_account_enabled(self, user_id: UUID, enabled: bool) -> None:
         for username, account in self._accounts.items():

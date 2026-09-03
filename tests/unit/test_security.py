@@ -1,5 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from uuid import uuid4
+from threading import Barrier, Lock
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -75,5 +77,61 @@ def test_role_requirement_enforces_user_reviewer_and_admin_boundaries() -> None:
 
     authenticator.require_roles(principal, Role.USER)
     authenticator.require_roles(principal, Role.REVIEWER)
+    with pytest.raises(AccessDeniedError):
+        authenticator.require_roles(principal, Role.ADMIN)
+
+
+def test_refresh_token_is_consumed_atomically_when_two_callers_race() -> None:
+    _, account = make_authenticator()
+    barrier = Barrier(2)
+
+    class BarrierSessionRegistry(InMemorySessionRegistry):
+        def __init__(self) -> None:
+            super().__init__()
+            self._checks = 0
+            self._checks_lock = Lock()
+
+        def is_active(self, session_id: UUID, user_id: UUID) -> bool:
+            active = super().is_active(session_id, user_id)
+            with self._checks_lock:
+                self._checks += 1
+                should_wait = self._checks <= 2
+            if active and should_wait:
+                barrier.wait()
+            return active
+
+    hasher = PasswordHasher()
+    authenticator = LocalAuthenticator(
+        accounts={account.username: account},
+        password_hasher=hasher,
+        token_service=TokenService("test-secret-that-is-long-enough!"),
+        sessions=BarrierSessionRegistry(),
+    )
+    refresh_token = authenticator.login(account.username, "correct horse battery staple").refresh_token
+
+    def refresh_once() -> bool:
+        barrier.wait()
+        try:
+            authenticator.refresh(refresh_token)
+        except AuthenticationError:
+            return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: refresh_once(), range(2)))
+
+    assert results.count(True) == 1
+    assert results.count(False) == 1
+
+
+def test_current_account_roles_override_roles_embedded_in_an_old_access_token() -> None:
+    authenticator, account = make_authenticator()
+    authenticator.set_roles(account.id, frozenset({Role.ADMIN}))
+    token = authenticator.login(account.username, "correct horse battery staple").access_token
+    authenticator.set_roles(account.id, frozenset({Role.USER}))
+
+    principal = authenticator.authenticate_access_token(token)
+
+    assert principal.roles == frozenset({Role.USER})
     with pytest.raises(AccessDeniedError):
         authenticator.require_roles(principal, Role.ADMIN)

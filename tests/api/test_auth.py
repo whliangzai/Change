@@ -2,9 +2,14 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+from app.core.config import load_settings
 from app.core.contracts import InMemoryAuditWriter
 from app.core.security import LocalAccount, PasswordHasher, Role
 from app.main import create_app
+
+TEST_SETTINGS = load_settings(
+    {"APP_ENV": "test", "AUTH_SECRET_KEY": "test-secret-that-is-long-enough!"}
+)
 
 
 def make_client() -> tuple[TestClient, InMemoryAuditWriter]:
@@ -23,7 +28,10 @@ def make_client() -> tuple[TestClient, InMemoryAuditWriter]:
         }.items()
     }
     audit_writer = InMemoryAuditWriter()
-    return TestClient(create_app(accounts=accounts, audit_writer=audit_writer)), audit_writer
+    return (
+        TestClient(create_app(settings=TEST_SETTINGS, accounts=accounts, audit_writer=audit_writer)),
+        audit_writer,
+    )
 
 
 def login(client: TestClient, username: str, key: str) -> dict[str, str]:
@@ -59,6 +67,7 @@ def test_app_factory_authentication_refresh_logout_and_audit_append() -> None:
     assert logout.status_code == 200
     assert denied.status_code == 401
     assert [event.action for event in audit_writer.events] == ["AUTH_LOGIN"]
+    assert audit_writer.events[0].idempotency_key == "login-user"
 
 
 def test_disabled_and_revoked_accounts_are_rejected_immediately_through_the_app() -> None:
@@ -101,3 +110,31 @@ def test_role_guards_allow_reviewer_and_admin_but_reject_user() -> None:
     assert responses["user"].json()["error"]["code"] == "FORBIDDEN"
     assert responses["reviewer"].status_code == 200
     assert responses["admin"].status_code == 200
+
+
+def test_mutating_requests_replay_identical_results_and_reject_key_reuse_with_new_input() -> None:
+    client, audit_writer = make_client()
+    headers = {"Idempotency-Key": "stable-login"}
+
+    first = client.post(
+        "/api/v1/auth/login",
+        headers=headers,
+        json={"username": "user", "password": "correct horse battery staple"},
+    )
+    replay = client.post(
+        "/api/v1/auth/login",
+        headers=headers,
+        json={"username": "user", "password": "correct horse battery staple"},
+    )
+    conflict = client.post(
+        "/api/v1/auth/login",
+        headers=headers,
+        json={"username": "reviewer", "password": "correct horse battery staple"},
+    )
+
+    assert first.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json() == first.json()
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert len(audit_writer.events) == 1

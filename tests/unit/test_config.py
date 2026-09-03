@@ -6,7 +6,7 @@ from app.core.config import ConfigurationError, load_settings
 
 
 def test_load_settings_uses_quantitative_guardrail_defaults() -> None:
-    settings = load_settings({"AUTH_SECRET_KEY": "test-secret-that-is-long-enough"})
+    settings = load_settings({"APP_ENV": "test", "AUTH_SECRET_KEY": "test-secret-that-is-long-enough!"})
 
     assert settings.data_history_start.isoformat() == "2016-01-01"
     assert settings.benchmark_primary == "000300.SH"
@@ -24,7 +24,8 @@ def test_load_settings_rejects_invalid_drawdown_ordering() -> None:
     with pytest.raises(ConfigurationError, match="DRAWDOWN_STOP"):
         load_settings(
             {
-                "AUTH_SECRET_KEY": "test-secret-that-is-long-enough",
+                "APP_ENV": "test",
+                "AUTH_SECRET_KEY": "test-secret-that-is-long-enough!",
                 "DRAWDOWN_WARNING": "0.08",
                 "DRAWDOWN_STOP": "0.06",
             }
@@ -34,3 +35,14 @@ def test_load_settings_rejects_invalid_drawdown_ordering() -> None:
 def test_load_settings_requires_a_secret_outside_development() -> None:
     with pytest.raises(ConfigurationError, match="AUTH_SECRET_KEY"):
         load_settings({"APP_ENV": "production"})
+
+
+def test_load_settings_requires_an_explicit_environment_and_strong_production_secret() -> None:
+    with pytest.raises(ConfigurationError, match="APP_ENV"):
+        load_settings({"AUTH_SECRET_KEY": "test-secret-that-is-long-enough!"})
+    with pytest.raises(ConfigurationError, match="AUTH_SECRET_KEY"):
+        load_settings({"APP_ENV": "production", "AUTH_SECRET_KEY": "short"})
+    with pytest.raises(ConfigurationError, match="AUTH_SECRET_KEY"):
+        load_settings(
+            {"APP_ENV": "production", "AUTH_SECRET_KEY": "development-only-secret-change-me"}
+        )

@@ -32,6 +32,11 @@ class StateConflictError(ApplicationError):
         super().__init__("STATE_CONFLICT", message, 409, details or [])
 
 
+class IdempotencyConflictError(ApplicationError):
+    def __init__(self, message: str, details: list[dict[str, Any]] | None = None) -> None:
+        super().__init__("IDEMPOTENCY_CONFLICT", message, 409, details or [])
+
+
 class DependencyError(ApplicationError):
     def __init__(self, message: str, details: list[dict[str, Any]] | None = None) -> None:
         super().__init__("DEPENDENCY_UNAVAILABLE", message, 503, details or [])

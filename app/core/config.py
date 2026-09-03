@@ -28,8 +28,6 @@ class Settings:
 
 
 _DEFAULTS: dict[str, str] = {
-    "APP_ENV": "development",
-    "AUTH_SECRET_KEY": "development-only-secret-change-me",
     "DATA_HISTORY_START": "2016-01-01",
     "BENCHMARK_PRIMARY": "000300.SH",
     "BENCHMARK_SECONDARY": "000001.SH",
@@ -57,11 +55,15 @@ def load_settings(overrides: Mapping[str, str] | None = None) -> Settings:
     """Load settings from the process environment with explicit test overrides."""
     supplied_values = dict(os.environ) | dict(overrides or {})
     values = _DEFAULTS | supplied_values
-    app_env = values["APP_ENV"].lower()
-    secret = supplied_values.get(
-        "AUTH_SECRET_KEY", _DEFAULTS["AUTH_SECRET_KEY"] if app_env == "development" else ""
-    )
-    if app_env != "development" and len(secret) < 32:
+    app_env = supplied_values.get("APP_ENV", "").lower()
+    if not app_env:
+        raise ConfigurationError("APP_ENV must be explicitly configured")
+    secret = supplied_values.get("AUTH_SECRET_KEY", "")
+    if not secret:
+        raise ConfigurationError("AUTH_SECRET_KEY must be configured")
+    if app_env not in {"development", "test"} and (
+        len(secret) < 32 or secret == "development-only-secret-change-me"
+    ):
         raise ConfigurationError(
             "AUTH_SECRET_KEY must be at least 32 characters outside development"
         )

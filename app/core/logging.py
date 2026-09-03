@@ -8,16 +8,18 @@ from typing import Any
 
 _SENSITIVE_KEYS = {"authorization", "password", "secret", "token", "database_url", "queue_url"}
 _SENSITIVE_ASSIGNMENT = re.compile(
-    r"(?P<key>(?:access_|refresh_)?token|authorization|password|secret|api[_-]?key|"
-    r"queue[_-]?url|database[_-]?url)\s*(?P<separator>=|:)\s*(?P<value>[^\s,;]+)",
+    r"(?P<key>(?:access_|refresh_)?token|authorization|password|secret|auth[_-]?secret[_-]?key|"
+    r"api[_-]?key|queue[_-]?url|database[_-]?url)\s*(?P<separator>=|:)\s*(?P<value>.*?)"
+    r"(?=\s+(?:(?:access_|refresh_)?token|authorization|password|secret|auth[_-]?secret[_-]?key|"
+    r"api[_-]?key|queue[_-]?url|database[_-]?url)\s*(?:=|:)|$)",
     re.IGNORECASE,
 )
 _AUTHORIZATION_BEARER_CREDENTIAL = re.compile(
-    r"\bauthorization\s*:\s*bearer\s+[^\s,;]+",
+    r"\bauthorization\s*(?::|=)\s*bearer\s+.*?(?=$|\s+(?:[A-Za-z_][A-Za-z0-9_]*\s*(?:=|:)))",
     re.IGNORECASE,
 )
 _BARE_BEARER_CREDENTIAL = re.compile(
-    r"\bbearer\s+(?!of\b)[A-Za-z0-9._~+/=-]+(?=$|[\s,;])",
+    r"\bbearer\s+(?!of\b)\S+",
     re.IGNORECASE,
 )
 _CREDENTIAL_URL = re.compile(r"(?:postgres(?:ql)?|redis)://[^\s,;]+", re.IGNORECASE)

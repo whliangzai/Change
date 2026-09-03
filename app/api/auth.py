@@ -55,6 +55,7 @@ def login(
             object_id=str(principal.user_id),
             request_id=request_id,
             result="SUCCESS",
+            idempotency_key=getattr(request.state, "idempotency_key", None),
         )
     )
     return _success(request, _token_data(tokens.access_token, tokens.refresh_token))

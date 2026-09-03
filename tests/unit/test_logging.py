@@ -106,3 +106,23 @@ def test_structured_logs_preserve_bearer_as_an_ordinary_word() -> None:
     rendered = formatter.format(record)
 
     assert "bearer of ordinary instruments" in rendered
+
+
+def test_structured_logs_redact_case_insensitive_sensitive_fields_and_multitoken_values() -> None:
+    formatter = StructuredJsonFormatter()
+    record = logging.LogRecord(
+        "test",
+        logging.ERROR,
+        __file__,
+        1,
+        "PASSWORD=canary first second authorization=Bearer canary:opaque?value",
+        (),
+        None,
+    )
+    record.exc_text = "Auth_Secret_Key=canary secret api_key=canary-key TOKEN=canary-token"
+
+    rendered = formatter.format(record)
+
+    for secret in ("canary", "opaque", "secret", "canary-key", "canary-token"):
+        assert secret not in rendered
+    assert "ordinary" not in rendered

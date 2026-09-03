@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import Depends, Header, Request
 
-from app.core.contracts import AuditWriter
+from app.core.contracts import AuditWriter, IdempotencyStore
 from app.core.errors import ValidationError
 from app.core.security import AuthenticationError, LocalAuthenticator, Principal, Role
 
@@ -20,6 +20,10 @@ def get_audit_writer(request: Request) -> AuditWriter:
 
 def get_authenticator(request: Request) -> LocalAuthenticator:
     return request.app.state.authenticator  # type: ignore[no-any-return]
+
+
+def get_idempotency_store(request: Request) -> IdempotencyStore:
+    return request.app.state.idempotency_store  # type: ignore[no-any-return]
 
 
 def get_current_principal(

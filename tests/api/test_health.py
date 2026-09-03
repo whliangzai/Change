@@ -1,11 +1,16 @@
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from app.core.config import load_settings
 from app.main import create_app
+
+TEST_SETTINGS = load_settings(
+    {"APP_ENV": "test", "AUTH_SECRET_KEY": "test-secret-that-is-long-enough!"}
+)
 
 
 def test_health_is_dependency_neutral_and_propagates_request_id() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(settings=TEST_SETTINGS))
 
     response = client.get("/health", headers={"X-Request-Id": "req_health_1"})
 
@@ -19,7 +24,7 @@ def test_health_is_dependency_neutral_and_propagates_request_id() -> None:
 
 def test_readiness_reports_named_checks_without_exposing_configuration() -> None:
     client = TestClient(
-        create_app(readiness_checks={"database": lambda: True, "queue": lambda: False})
+        create_app(settings=TEST_SETTINGS, readiness_checks={"database": lambda: True, "queue": lambda: False})
     )
 
     response = client.get("/api/v1/health/readiness")
@@ -34,7 +39,7 @@ def test_readiness_reports_named_checks_without_exposing_configuration() -> None
 
 
 def test_mutating_routes_require_an_idempotency_key() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(settings=TEST_SETTINGS))
 
     response = client.post(
         "/api/v1/auth/login",
@@ -47,7 +52,7 @@ def test_mutating_routes_require_an_idempotency_key() -> None:
 
 
 def test_whitespace_idempotency_key_is_rejected() -> None:
-    client = TestClient(create_app())
+    client = TestClient(create_app(settings=TEST_SETTINGS))
 
     response = client.post(
         "/api/v1/auth/login",
@@ -60,7 +65,7 @@ def test_whitespace_idempotency_key_is_rejected() -> None:
 
 
 def test_framework_and_unhandled_errors_use_the_standard_error_envelope() -> None:
-    app = create_app()
+    app = create_app(settings=TEST_SETTINGS)
 
     @app.get("/http-error")
     def http_error() -> None:
@@ -86,3 +91,14 @@ def test_framework_and_unhandled_errors_use_the_standard_error_envelope() -> Non
     assert unexpected.status_code == 500
     assert unexpected.json()["error"]["code"] == "INTERNAL_ERROR"
     assert "not-for-clients" not in unexpected.text
+    assert unexpected.headers["X-Request-Id"].startswith("req_")
+
+
+def test_invalid_or_overlong_request_id_is_replaced_with_a_generated_value() -> None:
+    client = TestClient(create_app(settings=TEST_SETTINGS))
+
+    response = client.get("/health", headers={"X-Request-Id": "invalid request id" * 10})
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-Id"].startswith("req_")
+    assert response.headers["X-Request-Id"] == response.json()["request_id"]
