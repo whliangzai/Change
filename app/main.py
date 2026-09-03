@@ -9,10 +9,13 @@ from fastapi.responses import Response
 from app.api import audit, auth, health
 from app.api.errors import error_response, register_error_handlers
 from app.core.config import Settings, load_settings
-from app.core.contracts import InMemoryAuditWriter
+from app.core.contracts import AuditWriter, InMemoryAuditWriter
+from app.core.dependencies import require_idempotency_key
+from app.core.errors import ValidationError
 from app.core.logging import configure_logging
 from app.core.security import (
     InMemorySessionRegistry,
+    LocalAccount,
     LocalAuthenticator,
     PasswordHasher,
     TokenService,
@@ -23,6 +26,8 @@ def create_app(
     *,
     settings: Settings | None = None,
     readiness_checks: Mapping[str, Callable[[], bool]] | None = None,
+    accounts: Mapping[str, LocalAccount] | None = None,
+    audit_writer: AuditWriter | None = None,
 ) -> FastAPI:
     """Build an application with replaceable process-local adapters for testing."""
     runtime_settings = settings or load_settings()
@@ -32,9 +37,9 @@ def create_app(
         "database": lambda: True,
         "queue": lambda: True,
     }
-    app.state.audit_writer = InMemoryAuditWriter()
+    app.state.audit_writer = audit_writer or InMemoryAuditWriter()
     app.state.authenticator = LocalAuthenticator(
-        accounts={},
+        accounts=dict(accounts or {}),
         password_hasher=PasswordHasher(),
         token_service=TokenService(runtime_settings.auth_secret_key),
         sessions=InMemorySessionRegistry(),
@@ -48,15 +53,11 @@ def create_app(
     ) -> Response:
         request_id = request.headers.get("X-Request-Id") or f"req_{uuid4().hex}"
         request.state.request_id = request_id
-        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not request.headers.get(
-            "Idempotency-Key"
-        ):
-            response = error_response(
-                request,
-                400,
-                "VALIDATION_ERROR",
-                "Idempotency-Key is required for mutating requests",
-            )
+        try:
+            if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+                require_idempotency_key(request.headers.get("Idempotency-Key"))
+        except ValidationError as exc:
+            response = error_response(request, exc.status_code, exc.code, exc.message, exc.details)
         else:
             response = await call_next(request)
         response.headers["X-Request-Id"] = request_id

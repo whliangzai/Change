@@ -43,6 +43,7 @@ def require_roles(*roles: Role) -> Callable[[Principal], Principal]:
 
 
 def require_idempotency_key(value: str | None) -> str:
-    if value is None or not value.strip():
+    normalized_value = (value or "").strip()
+    if not normalized_value:
         raise ValidationError("Idempotency-Key is required for mutating requests")
-    return value
+    return normalized_value
