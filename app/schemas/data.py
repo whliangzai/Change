@@ -12,6 +12,12 @@ class BatchCreate(BaseModel):
     date_to: date | None = None
 
 
+class BatchImport(BatchCreate):
+    available_at: str | None = None
+    information_cutoff_at: str | None = None
+    version: str | None = Field(default=None, min_length=1, max_length=64)
+
+
 class PoolQuery(BaseModel):
     trade_date: date
     status: str | None = None

@@ -67,6 +67,26 @@ class InMemoryResearchRepository:
         }
         self.executions: dict[str, dict[str, Any]] = {}
         self.exports: dict[str, dict[str, Any]] = {}
+        self.daily_bars: list[dict[str, Any]] = [
+            {
+                "symbol": "600000.SH",
+                "exchange": "SSE",
+                "trade_date": "2026-09-03",
+                "raw_open": "10.000000",
+                "raw_high": "10.200000",
+                "raw_low": "9.900000",
+                "raw_close": "10.100000",
+                "adjusted_open": "10.000000",
+                "adjusted_high": "10.200000",
+                "adjusted_low": "9.900000",
+                "adjusted_close": "10.100000",
+                "volume": "10000.000000",
+                "amount": "101000.000000",
+                "adjust_factor": "1.0000000000",
+                "available_at": "2026-09-03T18:00:00+00:00",
+                "data_batch_id": "batch_available",
+            }
+        ]
 
     def create_batch(self, owner_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         batch_id = f"db_{uuid4().hex[:12]}"
@@ -86,8 +106,24 @@ class InMemoryResearchRepository:
     def get_batch_quality(self, batch_id: str, owner_id: UUID) -> dict[str, Any] | None:
         return self._owned(self.batches.get(batch_id), owner_id)
 
+    def list_batches(
+        self, owner_id: UUID, status: str | None, page: int, page_size: int
+    ) -> dict[str, Any]:
+        rows = [
+            deepcopy(batch)
+            for batch in self.batches.values()
+            if batch.get("owner_id") == str(owner_id)
+            and (status is None or batch.get("quality_status") == status)
+        ]
+        return _page(rows, page, page_size)
+
     def list_pool(
-        self, trade_date: date, status: str | None, page: int, page_size: int
+        self,
+        trade_date: date,
+        status: str | None,
+        page: int,
+        page_size: int,
+        owner_id: UUID | None = None,
     ) -> dict[str, Any]:
         rows = [
             {
@@ -105,6 +141,24 @@ class InMemoryResearchRepository:
         ]
         if status == "EXCLUDED":
             rows = []
+        elif status == "ELIGIBLE":
+            rows = [row for row in rows if row["in_pool"]]
+        return _page(rows, page, page_size)
+
+    def list_daily_bars(
+        self,
+        trade_date: date,
+        symbol: str | None,
+        page: int,
+        page_size: int,
+        owner_id: UUID,
+    ) -> dict[str, Any]:
+        rows = [
+            deepcopy(row)
+            for row in self.daily_bars
+            if row["trade_date"] == trade_date.isoformat()
+            and (symbol is None or row["symbol"] == symbol)
+        ]
         return _page(rows, page, page_size)
 
     def create_strategy(self, owner_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
@@ -151,6 +205,18 @@ class InMemoryResearchRepository:
             "changes": record.get("parameters", {}),
         }
 
+    def list_strategies(
+        self, owner_id: UUID, status: str | None, page: int, page_size: int
+    ) -> dict[str, Any]:
+        rows = [
+            deepcopy(record)
+            for record in self.strategies.values()
+            if record.get("owner_id") == str(owner_id)
+            and (status is None or record.get("status") == status)
+        ]
+        rows.sort(key=lambda record: str(record["strategy_version_id"]))
+        return _page(rows, page, page_size)
+
     def dependencies_available(self, payload: dict[str, Any]) -> bool:
         batch = self.batches.get(payload["data_batch_id"])
         strategy = self.strategies.get(payload["strategy_version_id"])
@@ -180,6 +246,17 @@ class InMemoryResearchRepository:
     def get_run(self, run_id: str, owner_id: UUID) -> dict[str, Any] | None:
         return self._owned(self.runs.get(run_id), owner_id)
 
+    def list_backtests(
+        self, owner_id: UUID, status: str | None, page: int, page_size: int
+    ) -> dict[str, Any]:
+        rows = [
+            deepcopy(run)
+            for run in self.runs.values()
+            if run.get("owner_id") == str(owner_id)
+            and (status is None or run.get("status") == status)
+        ]
+        return _page(rows, page, page_size)
+
     def get_run_child(self, run_id: str, owner_id: UUID, kind: str) -> dict[str, Any] | None:
         record = self.get_run(run_id, owner_id)
         if record is None:
@@ -194,11 +271,14 @@ class InMemoryResearchRepository:
             "unavailable_reasons": [],
         }
 
-    def list_plans(self, execution_date: date, page: int, page_size: int) -> dict[str, Any]:
+    def list_plans(
+        self, execution_date: date, page: int, page_size: int, owner_id: UUID | None = None
+    ) -> dict[str, Any]:
         rows = [
             deepcopy(p)
             for p in self.plans.values()
             if p["execution_date"] == execution_date.isoformat()
+            and (owner_id is None or p.get("owner_id") in {None, str(owner_id)})
         ]
         return _page(rows, page, page_size)
 
@@ -239,7 +319,7 @@ class InMemoryResearchRepository:
         plan["status"] = status
         return deepcopy(record)
 
-    def daily_report(self, report_date: date) -> dict[str, Any]:
+    def daily_report(self, report_date: date, owner_id: UUID | None = None) -> dict[str, Any]:
         return {
             "report_date": report_date.isoformat(),
             "run_id": None,
@@ -275,6 +355,7 @@ class InMemoryResearchRepository:
         record = {
             "export_id": export_id,
             "report_id": report_id,
+            "owner_id": str(owner_id),
             "status": "READY",
             "download_token": token,
             "expires_at": (datetime.now(UTC) + timedelta(minutes=15)).isoformat(),
@@ -282,8 +363,10 @@ class InMemoryResearchRepository:
         self.exports[export_id] = record
         return deepcopy(record)
 
-    def get_export(self, export_id: str) -> dict[str, Any] | None:
+    def get_export(self, export_id: str, owner_id: UUID | None = None) -> dict[str, Any] | None:
         record = self.exports.get(export_id)
+        if owner_id is not None and record is not None and record.get("owner_id") != str(owner_id):
+            return None
         return deepcopy(record) if record is not None else None
 
     def _owned(self, value: dict[str, Any] | None, owner_id: UUID) -> dict[str, Any] | None:

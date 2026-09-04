@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import importlib
 import os
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from app.core.config import ConfigurationError
 from app.core.errors import DependencyError
 
 
@@ -17,15 +19,32 @@ class QueueSettings:
     port: int = 6379
     password: str | None = None
     queue_name: str = "default"
+    db: int = 0
 
     @classmethod
-    def from_env(cls) -> QueueSettings:
-        return cls(
-            host=os.getenv("REDIS_HOST", "127.0.0.1"),
-            port=int(os.getenv("REDIS_PORT", "6379")),
-            password=os.getenv("REDIS_PASSWORD") or None,
-            queue_name=os.getenv("RQ_QUEUE", "default"),
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> QueueSettings:
+        values = os.environ if environ is None else environ
+        try:
+            port = int(values.get("REDIS_PORT", "6379"))
+            db = int(values.get("REDIS_DB", "0"))
+        except ValueError as exc:
+            raise ConfigurationError("REDIS_PORT and REDIS_DB must be integers") from exc
+        settings = cls(
+            host=values.get("REDIS_HOST", "127.0.0.1").strip(),
+            port=port,
+            password=values.get("REDIS_PASSWORD") or None,
+            queue_name=values.get("RQ_QUEUE", "default").strip(),
+            db=db,
         )
+        if not settings.host:
+            raise ConfigurationError("REDIS_HOST must be configured")
+        if not 1 <= settings.port <= 65535:
+            raise ConfigurationError("REDIS_PORT must be between 1 and 65535")
+        if settings.db < 0:
+            raise ConfigurationError("REDIS_DB must be non-negative")
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", settings.queue_name):
+            raise ConfigurationError("RQ_QUEUE must contain 1-64 safe characters")
+        return settings
 
 
 def redis_connection(settings: QueueSettings | None = None) -> Any:
@@ -34,14 +53,20 @@ def redis_connection(settings: QueueSettings | None = None) -> Any:
         redis = importlib.import_module("redis")
     except ImportError as exc:
         raise DependencyError("Redis client is not installed") from exc
-    return redis.Redis(
-        host=config.host,
-        port=config.port,
-        password=config.password,
-        decode_responses=False,
-        socket_connect_timeout=5,
-        socket_timeout=5,
-    )
+    try:
+        connection = redis.Redis(
+            host=config.host,
+            port=config.port,
+            db=config.db,
+            password=config.password,
+            decode_responses=False,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+        )
+        connection.ping()
+        return connection
+    except Exception as exc:
+        raise DependencyError("Redis is unavailable") from exc
 
 
 def rq_queue(settings: QueueSettings | None = None) -> Any:
@@ -50,9 +75,14 @@ def rq_queue(settings: QueueSettings | None = None) -> Any:
         queue_module = importlib.import_module("rq")
     except ImportError as exc:
         raise DependencyError("RQ is not installed") from exc
-    return queue_module.Queue(
-        name=config.queue_name, connection=redis_connection(config), default_timeout=3600
-    )
+    try:
+        return queue_module.Queue(
+            name=config.queue_name, connection=redis_connection(config), default_timeout=3600
+        )
+    except DependencyError:
+        raise
+    except Exception as exc:
+        raise DependencyError("RQ queue is unavailable") from exc
 
 
 def enqueue(
@@ -66,7 +96,7 @@ def enqueue(
     queue = rq_queue(settings)
     try:
         return queue.enqueue(function, *args, job_id=job_id, **kwargs)
-    except (ConnectionError, TimeoutError) as exc:
+    except Exception as exc:
         raise DependencyError("Redis queue is unavailable") from exc
 
 

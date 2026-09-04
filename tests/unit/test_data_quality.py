@@ -56,6 +56,29 @@ def test_quality_gate_rejects_zero_price() -> None:
     assert any(issue.field == "raw_open" for issue in captured.value.issues)
 
 
+def test_quality_gate_rejects_missing_per_bar_availability_time() -> None:
+    row = {
+        "symbol": "600000.SH",
+        "trade_date": date(2024, 1, 2),
+        "raw_open": "10",
+        "raw_high": "10",
+        "raw_low": "10",
+        "raw_close": "10",
+        "adjusted_open": "10",
+        "adjusted_high": "10",
+        "adjusted_low": "10",
+        "adjusted_close": "10",
+        "volume": "2500000",
+        "amount": "25000000",
+        "adjust_factor": "1",
+    }
+
+    with pytest.raises(DataQualityError) as captured:
+        QualityGate().validate_daily_bars([row])
+
+    assert captured.value.issues[0].field == "available_at"
+
+
 def test_importer_hash_is_canonical_across_column_order_and_decimal_format(tmp_path) -> None:
     first = tmp_path / "first.csv"
     second = tmp_path / "second.csv"
@@ -78,3 +101,10 @@ def test_provenance_reports_timezone_issues_without_comparing_naive_and_aware() 
         )
 
     assert {issue.field for issue in captured.value.issues} == {"available_at"}
+
+
+def test_quality_gate_rejects_an_empty_daily_bar_dataset() -> None:
+    with pytest.raises(DataQualityError) as captured:
+        QualityGate().validate_daily_bars([])
+
+    assert captured.value.issues[0].field == "dataset"

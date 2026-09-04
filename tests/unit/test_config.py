@@ -22,6 +22,20 @@ def test_load_settings_uses_quantitative_guardrail_defaults() -> None:
     assert settings.partial_fill_mode == "FULL_OR_NONE"
 
 
+def test_development_account_is_optional_and_supplied_only_by_environment() -> None:
+    settings = load_settings(
+        {
+            "APP_ENV": "development",
+            "AUTH_SECRET_KEY": "development-only-secret-change-me",
+            "DEVELOPMENT_USERNAME": "researcher",
+            "DEVELOPMENT_PASSWORD": "local-test-password",
+        }
+    )
+
+    assert settings.development_username == "researcher"
+    assert settings.development_password == "local-test-password"
+
+
 def test_load_settings_rejects_invalid_drawdown_ordering() -> None:
     with pytest.raises(ConfigurationError, match="DRAWDOWN_STOP"):
         load_settings(

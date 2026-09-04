@@ -5,19 +5,23 @@ import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import RequestResponseEndpoint
 
-from app.api import auth, health
+from app.api import auth, health, pages
 from app.api.errors import error_response, register_error_handlers
 from app.api.v1 import admin, backtests, data, operations, strategies
 from app.api.v1.common import InMemoryResearchRepository
+from app.application.data_import_service import DataImportApplicationService
 from app.core.config import Settings, load_settings
 from app.core.contracts import (
+    AuditEvent,
     AuditWriter,
     IdempotencyRequest,
     IdempotencyResult,
@@ -33,8 +37,21 @@ from app.core.security import (
     LocalAccount,
     LocalAuthenticator,
     PasswordHasher,
+    Role,
+    SessionRegistry,
     TokenService,
 )
+from app.infrastructure.db.session import database_is_ready, make_engine
+from app.infrastructure.repositories.research import SqlAlchemyResearchRepository
+from app.infrastructure.repositories.runtime import (
+    SqlAlchemyAccountDirectory,
+    SqlAlchemyAuditWriter,
+    SqlAlchemyIdempotencyStore,
+    SqlAlchemyJobRunStore,
+    SqlAlchemySessionRegistry,
+)
+from app.jobs.idempotency import InMemoryJobRunStore, JobRunStore
+from app.jobs.queue import QueueSettings, redis_connection
 
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}\Z")
 _REPLAY_UNSAFE_HEADERS = {
@@ -82,25 +99,104 @@ def create_app(
     accounts: Mapping[str, LocalAccount] | None = None,
     audit_writer: AuditWriter | None = None,
     idempotency_store: IdempotencyStore | None = None,
-    repository: InMemoryResearchRepository | None = None,
+    repository: InMemoryResearchRepository | SqlAlchemyResearchRepository | None = None,
 ) -> FastAPI:
     """Build an application with replaceable process-local adapters for testing."""
     runtime_settings = settings or load_settings()
     app = FastAPI(title="A-share Quantitative Validation", version="0.1.0")
+    static_dir = Path(__file__).resolve().parents[1] / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     app.state.settings = runtime_settings
     app.state.readiness_checks = readiness_checks or {
         "database": lambda: True,
         "queue": lambda: True,
     }
-    app.state.audit_writer = audit_writer or InMemoryAuditWriter()
-    app.state.idempotency_store = idempotency_store or InMemoryIdempotencyStore()
-    app.state.repository = repository or InMemoryResearchRepository()
+    session_registry: SessionRegistry = InMemorySessionRegistry()
+    job_run_store: JobRunStore = InMemoryJobRunStore()
+    account_directory: Any = None
+    if repository is not None:
+        app.state.repository = repository
+        app.state.audit_writer = audit_writer or InMemoryAuditWriter()
+        app.state.idempotency_store = idempotency_store or InMemoryIdempotencyStore()
+    elif runtime_settings.app_env == "test":
+        app.state.repository = InMemoryResearchRepository()
+        app.state.audit_writer = audit_writer or InMemoryAuditWriter()
+        app.state.idempotency_store = idempotency_store or InMemoryIdempotencyStore()
+    else:
+        engine = make_engine(runtime_settings.database_url)
+        if readiness_checks is None:
+            app.state.readiness_checks = {
+                "database": lambda: database_is_ready(engine),
+                "queue": lambda: _redis_is_ready(),
+            }
+        app.state.repository = SqlAlchemyResearchRepository.from_engine(
+            engine,
+            create_schema=runtime_settings.app_env == "development",
+        )
+        app.state.audit_writer = audit_writer or SqlAlchemyAuditWriter.from_engine(engine)
+        app.state.idempotency_store = idempotency_store or SqlAlchemyIdempotencyStore.from_engine(
+            engine
+        )
+        job_run_store = SqlAlchemyJobRunStore.from_engine(engine)
+        session_registry = SqlAlchemySessionRegistry.from_engine(engine)
+        if accounts is None:
+            account_directory = SqlAlchemyAccountDirectory.from_engine(engine)
+    password_hasher = PasswordHasher()
+    runtime_accounts = dict(accounts or {})
+    if (
+        account_directory is not None
+        and runtime_settings.app_env == "development"
+        and runtime_settings.development_username
+        and runtime_settings.development_password
+    ):
+        account_created = account_directory.bootstrap(
+            runtime_settings.development_username,
+            password_hasher.hash(runtime_settings.development_password),
+            frozenset({Role.USER, Role.REVIEWER, Role.ADMIN}),
+        )
+        if account_created:
+            app.state.audit_writer.append(
+                AuditEvent(
+                    occurred_at=datetime.now(UTC),
+                    actor_id=None,
+                    actor_roles=("SYSTEM",),
+                    action="LOCAL_DEVELOPMENT_ACCOUNT_BOOTSTRAP",
+                    object_type="user_account",
+                    object_id=runtime_settings.development_username,
+                    request_id="startup",
+                    result="SUCCESS",
+                    after_summary={"roles": ["USER", "REVIEWER", "ADMIN"]},
+                )
+            )
     app.state.authenticator = LocalAuthenticator(
-        accounts=dict(accounts or {}),
-        password_hasher=PasswordHasher(),
+        accounts=runtime_accounts,
+        password_hasher=password_hasher,
         token_service=TokenService(runtime_settings.auth_secret_key),
-        sessions=InMemorySessionRegistry(),
+        sessions=session_registry,
+        account_directory=account_directory,
     )
+    app.state.data_import_service = DataImportApplicationService(app.state.repository)
+    if (
+        isinstance(app.state.repository, SqlAlchemyResearchRepository)
+        and runtime_settings.app_env == "development"
+    ):
+        seed_result = app.state.repository.initialize_local_default_versions()
+        if seed_result["created"]:
+            app.state.audit_writer.append(
+                AuditEvent(
+                    occurred_at=datetime.now(UTC),
+                    actor_id=None,
+                    actor_roles=("SYSTEM",),
+                    action="LOCAL_DEFAULT_CONFIG_INITIALIZE",
+                    object_type="configuration_versions",
+                    object_id="cost_v1,rule_v1",
+                    request_id="startup",
+                    result="SUCCESS",
+                    after_summary=seed_result,
+                )
+            )
+    app.state.job_run_store = job_run_store
     configure_logging()
     register_error_handlers(app)
 
@@ -200,4 +296,13 @@ def create_app(
     app.include_router(backtests.router)
     app.include_router(operations.router)
     app.include_router(admin.router)
+    app.include_router(pages.router)
     return app
+
+
+def _redis_is_ready() -> bool:
+    try:
+        redis_connection(QueueSettings.from_env())
+    except Exception:
+        return False
+    return True

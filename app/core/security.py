@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from threading import Lock
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 import jwt
@@ -102,6 +102,26 @@ class TokenService:
         return str(jwt.encode(claims, self._secret_key, algorithm="HS256"))
 
 
+class SessionRegistry(Protocol):
+    def create(self, user_id: UUID) -> UUID: ...
+
+    def revoke(self, session_id: UUID) -> None: ...
+
+    def revoke_user(self, user_id: UUID) -> None: ...
+
+    def is_active(self, session_id: UUID, user_id: UUID) -> bool: ...
+
+    def consume(self, session_id: UUID, user_id: UUID) -> bool: ...
+
+
+class AccountDirectory(Protocol):
+    def get(self, username: str) -> LocalAccount | None: ...
+
+    def set_enabled(self, user_id: UUID, enabled: bool) -> None: ...
+
+    def set_roles(self, user_id: UUID, roles: frozenset[Role]) -> None: ...
+
+
 class InMemorySessionRegistry:
     def __init__(self) -> None:
         self._sessions: dict[UUID, UUID] = {}
@@ -140,15 +160,17 @@ class LocalAuthenticator:
         accounts: dict[str, LocalAccount],
         password_hasher: PasswordHasher,
         token_service: TokenService,
-        sessions: InMemorySessionRegistry,
+        sessions: SessionRegistry,
+        account_directory: AccountDirectory | None = None,
     ) -> None:
         self._accounts = accounts
         self._password_hasher = password_hasher
         self._token_service = token_service
         self._sessions = sessions
+        self._account_directory = account_directory
 
     def login(self, username: str, password: str) -> TokenPair:
-        account = self._accounts.get(username)
+        account = self._account(username)
         if (
             account is None
             or not account.enabled
@@ -167,12 +189,15 @@ class LocalAuthenticator:
         principal = self._principal_from_claims(claims)
         if not self._sessions.consume(principal.session_id, principal.user_id):
             raise AuthenticationError("refresh token was already consumed")
-        account = self._accounts[principal.username]
+        account = self._account(principal.username)
+        if account is None:
+            raise AuthenticationError("account is unavailable")
         return self._token_service.issue(account, self._sessions.create(account.id))
 
     def logout(self, refresh_token: str) -> None:
         claims = self._token_service.decode(refresh_token, "refresh")
-        self._sessions.revoke(UUID(str(claims["sid"])))
+        principal = self._principal_from_claims(claims)
+        self._sessions.revoke(principal.session_id)
 
     def disable_account(self, user_id: UUID) -> None:
         self._set_account_enabled(user_id, False)
@@ -185,6 +210,9 @@ class LocalAuthenticator:
         self._sessions.revoke_user(user_id)
 
     def set_roles(self, user_id: UUID, roles: frozenset[Role]) -> None:
+        if self._account_directory is not None:
+            self._account_directory.set_roles(user_id, roles)
+            return
         for username, account in self._accounts.items():
             if account.id == user_id:
                 self._accounts[username] = replace(account, roles=roles)
@@ -203,7 +231,7 @@ class LocalAuthenticator:
             frozenset(Role(role) for role in claims["roles"])
         except (KeyError, TypeError, ValueError) as exc:
             raise AuthenticationError("invalid token claims") from exc
-        account = self._accounts.get(username)
+        account = self._account(username)
         if account is None or account.id != user_id or not account.enabled:
             raise AuthenticationError("account is unavailable")
         if not self._sessions.is_active(session_id, user_id):
@@ -211,8 +239,16 @@ class LocalAuthenticator:
         return Principal(user_id, username, account.roles, session_id)
 
     def _set_account_enabled(self, user_id: UUID, enabled: bool) -> None:
+        if self._account_directory is not None:
+            self._account_directory.set_enabled(user_id, enabled)
+            return
         for username, account in self._accounts.items():
             if account.id == user_id:
                 self._accounts[username] = replace(account, enabled=enabled)
                 return
         raise AuthenticationError("account not found")
+
+    def _account(self, username: str) -> LocalAccount | None:
+        if self._account_directory is not None:
+            return self._account_directory.get(username)
+        return self._accounts.get(username)

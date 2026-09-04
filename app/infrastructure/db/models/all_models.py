@@ -14,6 +14,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -31,6 +32,14 @@ class UserAccount(UUIDPrimaryKeyMixin, Base):
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="ACTIVE")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_session"
+    session_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Role(UUIDPrimaryKeyMixin, Base):
@@ -65,6 +74,7 @@ class DataBatch(UUIDPrimaryKeyMixin, Base):
         ),
     )
     source_id: Mapped[UUID] = mapped_column(ForeignKey("data_source.id"), nullable=False)
+    owner_id: Mapped[str | None] = mapped_column(String(36))
     dataset_type: Mapped[str] = mapped_column(String(32), nullable=False)
     as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
     available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -73,6 +83,12 @@ class DataBatch(UUIDPrimaryKeyMixin, Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="VALIDATING")
     quality_summary: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    file_hash: Mapped[str | None] = mapped_column(String(64))
+    start_date: Mapped[date | None] = mapped_column(Date)
+    end_date: Mapped[date | None] = mapped_column(Date)
+    record_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    file_location: Mapped[str | None] = mapped_column(String(1024))
+    license_note: Mapped[str | None] = mapped_column(String(2048))
 
 
 class TradeCalendar(Base):
@@ -135,6 +151,7 @@ class DailyBar(Base):
     volume: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
     adjust_factor: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
+    available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     data_batch_id: Mapped[UUID] = mapped_column(ForeignKey("data_batch.id"), nullable=False)
     __table_args__ = (Index("ix_daily_bar_trade_date_security", "trade_date", "security_id"),)
 
@@ -245,6 +262,8 @@ class BacktestRun(UUIDPrimaryKeyMixin, Base):
     config_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     result_usable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    result_snapshot_hash: Mapped[str | None] = mapped_column(String(64))
+    result_summary: Mapped[dict[str, object] | None] = mapped_column(JSON)
     created_by: Mapped[UUID] = mapped_column(ForeignKey("user_account.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     __table_args__ = (Index("ix_backtest_run_status_created_at", "status", "created_at"),)
@@ -318,6 +337,7 @@ class OrderPlan(UUIDPrimaryKeyMixin, Base):
     trigger_reasons: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     risk_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
 
 
@@ -325,6 +345,7 @@ class ExecutionRecord(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "execution_record"
     execution_no: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     plan_id: Mapped[UUID] = mapped_column(ForeignKey("order_plan.id"), nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128))
     execution_type: Mapped[str] = mapped_column(String(16), nullable=False)
     executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -336,7 +357,15 @@ class ExecutionRecord(UUIDPrimaryKeyMixin, Base):
     unfilled_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     unfilled_reason: Mapped[str | None] = mapped_column(String(128))
     source: Mapped[str] = mapped_column(String(16), nullable=False)
-    __table_args__ = (Index("ix_execution_record_plan_executed_at", "plan_id", "executed_at"),)
+    __table_args__ = (
+        Index("ix_execution_record_plan_executed_at", "plan_id", "executed_at"),
+        Index(
+            "uq_execution_record_plan_idempotency_key",
+            "plan_id",
+            "idempotency_key",
+            unique=True,
+        ),
+    )
 
 
 class LedgerEntry(UUIDPrimaryKeyMixin, Base):
@@ -378,6 +407,17 @@ class ReportArtifact(UUIDPrimaryKeyMixin, Base):
     __table_args__ = (Index("ix_report_artifact_run_type", "run_id", "report_type"),)
 
 
+class ReportExport(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "report_export"
+    report_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_id: Mapped[UUID] = mapped_column(ForeignKey("user_account.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class DailyReport(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "daily_report"
     __table_args__ = (UniqueConstraint("report_date", "run_id", name="uq_daily_report_date_run"),)
@@ -399,10 +439,29 @@ class JobRun(UUIDPrimaryKeyMixin, Base):
     business_date: Mapped[date] = mapped_column(Date, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
+    run_number: Mapped[int | None] = mapped_column(Integer)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    phase: Mapped[str | None] = mapped_column(String(32))
+    value: Mapped[dict[str, object] | list[object] | str | int | float | bool | None] = (
+        mapped_column(JSON)
+    )
     error_summary: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class IdempotencyRecord(Base):
+    __tablename__ = "idempotency_record"
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    path: Mapped[str] = mapped_column(String(256), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status_code: Mapped[int | None] = mapped_column(Integer)
+    body: Mapped[bytes | None] = mapped_column(LargeBinary)
+    content_type: Mapped[str | None] = mapped_column(String(128))
+    headers: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class AuditEvent(UUIDPrimaryKeyMixin, Base):

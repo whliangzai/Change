@@ -18,6 +18,7 @@ import pandas as pd
 class ImportedDataset:
     source_path: Path
     content_hash: str
+    file_hash: str
     rows: tuple[dict[str, object], ...]
     dataset_type: str | None = None
     as_of_date: date | None = None
@@ -69,6 +70,7 @@ class AuthorizedFileImporter:
         return ImportedDataset(
             source_path=source_path,
             content_hash=canonical_content_hash(rows),
+            file_hash=_file_sha256(source_path),
             rows=rows,
             dataset_type=dataset_type,
             as_of_date=as_of_date,
@@ -91,6 +93,14 @@ def canonical_content_hash(rows: tuple[dict[str, object], ...] | list[dict[str, 
     canonical_rows.sort(key=lambda row: json.dumps(row, sort_keys=True, separators=(",", ":")))
     payload = json.dumps(canonical_rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _canonical_value(value: object) -> object:

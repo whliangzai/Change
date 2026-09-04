@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<section data-page="daily-flow" data-api-url="/api/v1/daily-flows" class="page-shell">
+  <div class="page-heading"><div><h1>执行日终</h1><p class="muted">日终仅生成研究候选与 T+1 人工计划，不会提交委托、撤单或划转资金。</p></div><a class="button-link" href="/strategies">策略版本</a></div>
+  <div id="daily-flow-permission" class="state" role="status">正在检查管理员权限…</div>
+  <form id="daily-flow-form" class="panel form-grid" novalidate>
+    <label class="wide">可用数据批次<select name="data_batch_id" id="daily-flow-batch" required><option value="">正在加载可用批次…</option></select></label>
+    <label>已发布策略版本<select name="strategy_version_id" id="daily-flow-strategy" required><option value="">正在加载已发布策略…</option></select></label>
+    <label>成本版本<input name="cost_config_id" value="cost_v1" required></label>
+    <label>规则版本<input name="rule_config_id" value="rule_v1" required></label>
+    <label>日终日期<input name="as_of_date" type="date" required></label>
+    <label>信息截点<input name="information_cutoff_at" type="datetime-local" required></label>
+    <label>初始权益<input name="initial_equity" value="20000.00" inputmode="decimal" required></label>
+    <label>最大投资比例<input name="max_investment_ratio" value="0.70" inputmode="decimal" required></label>
+    <div class="wide actions"><button class="primary" id="daily-flow-submit" type="submit">执行日终</button></div>
+  </form>
+  <section class="panel"><h2>日终结果</h2><div id="daily-flow-state" class="state" role="status">请选择可用数据批次和已发布策略版本。</div><dl id="daily-flow-result" class="definition-grid"></dl><div id="daily-flow-links" class="actions" hidden></div><p id="daily-flow-empty" class="muted" hidden>本次运行未生成候选或 T+1 计划。请检查数据覆盖、策略条件和风险限制；这不是成功成交。</p></section>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/daily_flow.js" defer></script>{% endblock %}

@@ -65,7 +65,12 @@ class QualityGate:
     def validate_daily_bars(self, rows: Iterable[Mapping[str, object]]) -> None:
         issues: list[QualityIssue] = []
         seen: set[tuple[str, date]] = set()
-        for row in rows:
+        materialized_rows = list(rows)
+        if not materialized_rows:
+            raise DataQualityError(
+                [QualityIssue("<dataset>", None, "dataset", "at least one daily bar is required")]
+            )
+        for row in materialized_rows:
             symbol = str(row.get("symbol", ""))
             trade_date = self._as_date(row.get("trade_date"))
             if not symbol:
@@ -80,6 +85,16 @@ class QualityGate:
                         QualityIssue(symbol, trade_date, "security/date", "duplicate security/date")
                     )
                 seen.add(key)
+            available_at = row.get("available_at")
+            if not isinstance(available_at, datetime) or available_at.tzinfo is None:
+                issues.append(
+                    QualityIssue(
+                        symbol,
+                        trade_date,
+                        "available_at",
+                        "a timezone-aware per-bar availability time is required",
+                    )
+                )
             for field in self._required_fields:
                 value = row.get(field)
                 if value is None or (isinstance(value, str) and not value.strip()):

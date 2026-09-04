@@ -1,1 +1,10 @@
-{% extends "base.html" %}{% block content %}<h1>运行总览</h1><p>数据质量：{{ data_quality|default('未加载') }}</p><p>策略版本：{{ strategy_version|default('未加载') }}；成本版本：{{ cost_version|default('未加载') }}；规则版本：{{ rule_version|default('未加载') }}</p>{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<section class="page-shell" data-page="dashboard" data-report-date="{{ data_date }}">
+  <div class="page-heading"><div><h1>运行总览</h1><p class="muted">研究运行、数据质量与人工流程状态。</p></div><button class="primary" id="dashboard-refresh" type="button">刷新</button></div>
+  <div id="dashboard-state" class="state loading" role="status">正在加载运行摘要…</div>
+  <div class="form-grid"><section class="panel"><h2>数据质量</h2><dl id="dashboard-data" class="definition-grid"></dl><a class="button-link" href="/data-quality">查看数据批次</a></section><section class="panel"><h2>回测运行</h2><dl id="dashboard-backtests" class="definition-grid"></dl><a class="button-link" href="/backtests">查看回测</a></section><section class="panel"><h2>日报与风险</h2><dl id="dashboard-daily" class="definition-grid"></dl><a class="button-link" href="/daily-reports/{{ data_date }}">查看日报</a></section></div>
+  <section class="panel"><h2>人工流程</h2><p>计划仅供人工确认；实际成交由人工录入。系统不会提交、撤销委托或划转资金。</p><div class="actions"><a class="button-link" href="/order-plans">查看计划</a><a class="button-link" href="/executions">录入成交</a></div></section>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/dashboard.js" defer></script>{% endblock %}

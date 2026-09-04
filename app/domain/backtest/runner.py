@@ -11,7 +11,7 @@ from decimal import Decimal
 
 from app.domain.backtest.metrics import Metrics, calculate_metrics
 from app.domain.execution.costs import CostModel
-from app.domain.execution.simulator import ExecutionSimulator, MarketBar, Order
+from app.domain.execution.simulator import ExecutionSimulator, Fill, MarketBar, Order
 from app.domain.portfolio.ledger import LedgerSnapshot, PortfolioLedger
 
 
@@ -51,6 +51,7 @@ class BacktestResult:
     metrics: Metrics
     ledger_snapshots: tuple[LedgerSnapshot, ...] = ()
     skipped_orders: tuple[SkippedOrder, ...] = ()
+    fills: tuple[Fill, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,10 +90,36 @@ class BacktestRunner:
             key=lambda bar: (bar.trade_date, bar.symbol),
         )
         order_payload = {
-            trade_date.isoformat(): [asdict(order) for order in day_orders]
+            trade_date.isoformat(): [
+                {
+                    "side": order.side,
+                    "symbol": order.symbol,
+                    "quantity": order.quantity,
+                    "fill_mode": order.fill_mode,
+                    "signal_date": order.signal_date,
+                }
+                for order in day_orders
+            ]
             for trade_date, day_orders in sorted((orders or {}).items())
         }
-        raw_payload = {"bars": [asdict(bar) for bar in ordered], "orders": order_payload}
+        raw_payload = {
+            "bars": [
+                {
+                    "symbol": bar.symbol,
+                    "trade_date": bar.trade_date,
+                    "open": bar.open,
+                    "low": bar.low,
+                    "high": bar.high,
+                    "close": bar.close,
+                    "is_suspended": bar.is_suspended,
+                    "limit_up": bar.limit_up,
+                    "limit_down": bar.limit_down,
+                    "available_quantity": bar.available_quantity,
+                }
+                for bar in ordered
+            ],
+            "orders": order_payload,
+        }
         raw = (
             input_hash
             or hashlib.sha256(
@@ -124,6 +151,7 @@ class BacktestRunner:
         equity_values = [config.initial_equity]
         ledger_snapshots: list[LedgerSnapshot] = []
         skipped_orders: list[SkippedOrder] = []
+        fills: list[Fill] = []
         last_closes: dict[str, Decimal] = {}
         for trade_date, day_bars in sorted(by_date.items()):
             ledger.settle_all()
@@ -150,6 +178,13 @@ class BacktestRunner:
                     continue
                 backtest_order = replace(order, fill_mode=config.fill_mode)
                 fill = simulator.execute(backtest_order, order_bar)
+                fill = replace(
+                    fill,
+                    execution_date=trade_date,
+                    signal_date=order.signal_date,
+                    industry=order.industry,
+                )
+                fills.append(fill)
                 if (
                     fill.status in {"FILLED", "PARTIALLY_FILLED"}
                     and fill.price is not None
@@ -166,7 +201,8 @@ class BacktestRunner:
             snapshot,
             snapshot_hash,
             equity,
-            calculate_metrics(equity),
+            calculate_metrics(equity, fills=fills, trade_dates=tuple(sorted(by_date))),
             tuple(ledger_snapshots),
             tuple(skipped_orders),
+            tuple(fills),
         )

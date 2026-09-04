@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from app.domain.execution.costs import CostBreakdown, CostModel
@@ -21,6 +21,12 @@ class MarketBar:
     limit_up: bool = False
     limit_down: bool = False
     available_quantity: int | None = None
+    amount: Decimal | None = None
+    available_at: datetime | None = None
+    is_st: bool = False
+    is_delisted: bool = False
+    industry: str | None = None
+    list_date: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +36,7 @@ class Order:
     quantity: int
     fill_mode: str = "FULL_OR_NONE"
     signal_date: date | None = None
+    industry: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +49,9 @@ class Fill:
     costs: CostBreakdown | None = None
     reason: str | None = None
     unfilled_quantity: int = 0
+    execution_date: date | None = None
+    signal_date: date | None = None
+    industry: str | None = None
 
 
 class ExecutionSimulator:

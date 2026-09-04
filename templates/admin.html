@@ -1,1 +1,11 @@
-{% extends "base.html" %}{% block content %}<h1>管理与审计</h1><p>管理员操作均写入审计，普通用户无权查看。</p>{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<section data-page="admin" data-api-url="/api/v1/jobs">
+  <div class="page-heading"><div><h1>管理与审计</h1><p class="muted">任务重试与审计查看必须通过服务端角色校验；页面不会直接修改业务记录。</p></div><button class="primary" id="admin-refresh" type="button">刷新</button></div>
+  <div id="admin-state" class="state loading" role="status">正在加载管理数据…</div>
+  <section class="panel"><h2>任务状态</h2><div class="table-wrap"><table id="jobs-table"><thead><tr><th>任务 ID</th><th>类型</th><th>状态</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead><tbody></tbody></table></div><div id="jobs-pagination" class="pagination"></div></section>
+  <section class="panel"><h2>审计事件</h2><div class="table-wrap"><table id="audit-table"><thead><tr><th>时间</th><th>操作者</th><th>角色</th><th>动作</th><th>对象</th><th>结果</th><th>请求号</th></tr></thead><tbody></tbody></table></div><div id="audit-pagination" class="pagination"></div></section>
+  <p class="compliance-local">管理操作保留审计记录；研究系统不提供自动交易能力。</p>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/admin.js" defer></script>{% endblock %}

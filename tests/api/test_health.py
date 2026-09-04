@@ -41,6 +41,25 @@ def test_readiness_reports_named_checks_without_exposing_configuration() -> None
     assert "postgres" not in response.text.lower()
 
 
+def test_non_test_readiness_probes_real_database_and_queue(monkeypatch) -> None:
+    settings = load_settings(
+        {
+            "APP_ENV": "development",
+            "AUTH_SECRET_KEY": "development-only-secret-change-me",
+            "DATABASE_URL": "sqlite:///:memory:",
+        }
+    )
+    monkeypatch.setattr("app.main.redis_connection", lambda _settings: object())
+
+    response = TestClient(create_app(settings=settings)).get("/api/v1/health/readiness")
+
+    assert response.status_code == 200
+    assert response.json()["data"] == {
+        "status": "ready",
+        "checks": {"database": "ok", "queue": "ok"},
+    }
+
+
 def test_mutating_routes_require_an_idempotency_key() -> None:
     client = TestClient(create_app(settings=TEST_SETTINGS))
 

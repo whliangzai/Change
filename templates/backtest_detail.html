@@ -1,1 +1,10 @@
-{% extends "base.html" %}{% block content %}<h1>回测运行详情</h1><p>运行号：{{ run_id|default('未加载') }}；结果状态：{{ result_status|default('未加载') }}</p>{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<section data-page="backtest-detail" data-api-url="{{ backtest_api_url }}" data-run-id="{{ run_id|default('') }}" class="page-shell">
+  <div class="page-heading"><div><h1>{% if run_id %}回测运行详情{% else %}回测运行{% endif %}</h1><p class="muted">结果仅用于研究验证。展示的价格为模拟价，不是委托价。</p></div><div class="actions"><a class="button-link" href="/backtests/create">新建回测</a><button class="primary" type="button" id="backtest-refresh">刷新</button></div></div>
+  <div id="backtest-state" class="state loading" role="status">正在加载回测…</div>
+  <section id="backtest-list-panel" class="panel" {% if run_id %}hidden{% endif %}><table id="backtest-list"><thead><tr><th>运行号</th><th>状态</th><th>日期区间</th><th>结果</th><th>操作</th></tr></thead><tbody></tbody></table></section>
+  <section id="backtest-detail-panel" {% if not run_id %}hidden{% endif %}><div class="panel"><dl id="run-summary" class="definition-grid"></dl><div id="run-stages"></div><div id="run-unavailable" class="state error" hidden></div><button class="primary" type="button" id="backtest-execute" hidden>执行回测</button></div><div class="panel"><h2>绩效报告</h2><div id="report-state" class="state loading">等待运行结果</div><dl id="report-metrics" class="definition-grid"></dl></div><div class="panel"><h2>交易明细</h2><div id="trades-state" class="state loading">等待运行结果</div><table id="trades-table"><thead><tr><th>日期</th><th>标的</th><th>方向</th><th>数量</th><th>价格</th><th>费用</th></tr></thead><tbody></tbody></table></div></section>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/backtest_detail.js" defer></script>{% endblock %}

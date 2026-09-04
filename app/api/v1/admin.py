@@ -34,6 +34,11 @@ def audit_events(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ) -> JSONResponse:
+    if hasattr(audit_writer, "page"):
+        items, total = audit_writer.page(page, page_size)
+        return _success(
+            request, {"items": items, "page": page, "page_size": page_size, "total": total}
+        )
     events = getattr(audit_writer, "events", [])
     start = (page - 1) * page_size
     items = [

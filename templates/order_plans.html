@@ -1,1 +1,12 @@
-{% extends "base.html" %}{% block content %}<h1>人工计划确认</h1><p>计划永远不等于成交；确认截止下一交易日 09:25。</p>{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<section data-page="order-plans" data-api-url="/api/v1/order-plans">
+  <div class="page-heading"><div><h1>人工计划确认</h1><p class="muted">计划永远不等于成交。确认或跳过由服务端 RBAC、风险状态和版本号共同校验。</p></div></div>
+  <form id="plan-filter" class="panel form-grid"><label>执行日期<input type="date" id="plan-execution-date" name="execution_date" value="{{ data_date }}" required></label><div class="actions"><button class="primary" type="submit">查询计划</button></div></form>
+  <div id="plan-state" class="state loading" role="status">请选择执行日期后加载。</div>
+  <section class="panel"><div class="table-wrap"><table id="plan-table"><thead><tr><th>计划号</th><th>方向</th><th>标的</th><th>数量</th><th>参考价</th><th>预估成本</th><th>风险</th><th>状态</th><th>版本</th><th>操作</th></tr></thead><tbody></tbody></table></div><div id="plan-pagination" class="pagination"></div></section>
+  <section id="plan-decision-panel" class="panel" hidden><h2>人工审核</h2><p id="plan-decision-target" class="muted"></p><form id="plan-decision-form" class="form-grid"><input type="hidden" name="plan_id"><input type="hidden" name="expected_version"><label>决定<select name="decision"><option value="CONFIRM">确认计划</option><option value="SKIP">跳过计划</option></select></label><label class="wide">审核备注<textarea name="review_note" required minlength="1" maxlength="2048" placeholder="记录人工核对依据"></textarea></label><div class="actions wide"><button class="primary" id="plan-decision-submit" type="submit">提交人工决定</button><button type="button" id="plan-decision-cancel">取消</button></div></form></section>
+  <p class="compliance-local">研究用途；计划不等于成交；无券商下单、撤单或资金划转能力。</p>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/order_plans.js" defer></script>{% endblock %}

@@ -4,11 +4,13 @@
 |---|---|
 | 文档名称 | 06-API接口设计 |
 | 版本 | v1.1.0 |
-| 状态 | 基线已决策（接口待实施） |
-| 最后更新时间 | 2026-09-03 |
+| 状态 | 本地 MVP 路由已实现；外部依赖联调待执行 |
+| 最后更新时间 | 2026-09-04 |
 | 关联文档 | [需求规格说明书](./02-需求规格说明书.md)、[产品流程与页面说明](./03-产品流程与页面说明.md)、[架构设计](./04-系统架构设计.md)、[数据库设计](./05-数据库设计.md)、[开发规范](./07-开发规范与工程约定.md) |
 
 > API 路径和字段是内部实现契约，首期按 v1.1.0 基线实施；仍允许在开发阶段通过版本化变更调整。基础路径为 `/api/v1`，传输 JSON/UTF-8，金额和价格以字符串返回以避免精度丢失；系统不提供自动下单 API。
+
+> 实现核对（2026-09-04）：本地代码已挂载认证、数据导入/查询、策略、回测、日报/计划/人工成交、管理员任务/审计和页面路由；持久化开发路径使用 SQLite 或配置的 PostgreSQL。本文记录的是接口契约，不把本地测试替代为 PostgreSQL/Redis/Docker 联调通过；`broker/order-submit`、资金划转和自动恢复路由仍不存在。
 
 ## 0. v1.1.0 配置决策
 
@@ -69,21 +71,27 @@
 | 编号 | 方法与路径 | 权限 | 用途 |
 |---|---|---|---|
 | API-DATA-001 | `POST /data/batches` | USER/ADMIN | 创建导入批次 |
+| API-DATA-004 | `POST /data/imports` | USER/ADMIN | 导入授权 CSV/Parquet 并执行质量闸门 |
 | API-DATA-002 | `GET /data/batches/{id}/quality` | USER | 查看质量报告 |
 | API-DATA-003 | `GET /securities/pool?trade_date=` | USER | 查看历史股票池 |
+| API-DATA-005 | `GET /data/batches`、`GET /data/bars` | USER | 分页查看批次和日线 |
 | API-STRAT-001 | `POST /strategies` | USER | 创建策略草稿 |
 | API-STRAT-002 | `POST /strategies/{id}/submit-review` | REVIEWER/ADMIN | 提交/发布版本 |
 | API-STRAT-003 | `GET /strategies/{id}/diff` | USER | 查看版本差异 |
 | API-BT-001 | `POST /backtests` | USER | 创建回测运行 |
+| API-BT-005 | `GET /backtests` | USER | 分页查看回测运行 |
 | API-BT-002 | `GET /backtests/{run_id}` | USER | 查看运行与阶段 |
 | API-BT-003 | `GET /backtests/{run_id}/trades` | USER | 分页查看交易 |
 | API-BT-004 | `GET /backtests/{run_id}/report` | USER | 查看指标/报告 |
+| API-BT-006 | `POST /backtests/{run_id}/execute` | USER | 执行已持久化回测 |
+| API-OPS-000 | `POST /daily-flows` | USER | 运行幂等的日终流程 |
 | API-OPS-001 | `GET /daily-reports/{date}` | USER | 查看日报 |
 | API-OPS-002 | `GET /order-plans?execution_date=` | USER | 查看计划 |
 | API-OPS-003 | `POST /order-plans/{id}/confirm` | REVIEWER/ADMIN | 人工确认/跳过 |
 | API-OPS-004 | `POST /executions` | USER | 录入实际成交 |
 | API-OPS-005 | `GET /accounts/{id}/snapshots` | USER | 查看账户账本 |
 | API-OPS-006 | `GET /reports/{id}/export` | USER | 导出文件 |
+| API-OPS-007 | `GET /exports/{id}` | USER | 查询异步导出状态 |
 | API-ADMIN-001 | `GET /jobs`、`POST /jobs/{id}/retry` | ADMIN | 查看/重试任务 |
 | API-ADMIN-002 | `GET /audit-events` | REVIEWER/ADMIN | 查询审计 |
 

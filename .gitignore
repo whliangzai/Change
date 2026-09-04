@@ -29,3 +29,8 @@ Thumbs.db
 # Worktree directories when created inside the project
 .worktrees/
 worktrees/
+
+data.db
+money-mvp.db
+.pytest-tmp*/
+tmp*/

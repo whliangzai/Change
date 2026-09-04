@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<section data-page="data-import" data-api-url="/api/v1/data/imports" class="page-shell">
+  <div class="page-heading"><div><h1>导入授权行情</h1><p class="muted">仅管理员可导入本地 CSV 或 Parquet。系统不会下载、抓取或使用未授权行情。</p></div><a class="button-link" href="/data-quality">查看数据质量</a></div>
+  <div id="data-import-permission" class="state" role="status">正在检查管理员权限…</div>
+  <form id="data-import-form" class="panel form-grid" novalidate>
+    <label class="wide">本地文件路径<input name="file_location" required maxlength="1024" placeholder="F:\\PROJECT\\Money\\data\\authorized_sample.csv"></label>
+    <label>来源<input name="source_name" required maxlength="128" placeholder="authorized-simulation"></label>
+    <label>数据类型<select name="data_type"><option value="DAILY_BAR">DAILY_BAR</option></select></label>
+    <label>可得时间<input name="available_at" type="datetime-local" required></label>
+    <label>信息截点<input name="information_cutoff_at" type="datetime-local" required></label>
+    <label class="wide">授权说明<textarea name="license_note" required maxlength="2048" placeholder="说明本地文件的授权范围、来源和使用限制"></textarea></label>
+    <label>版本（可选）<input name="version" maxlength="64" placeholder="留空由系统生成内容版本"></label>
+    <div class="wide actions"><button class="primary" id="data-import-submit" type="submit">导入并校验</button></div>
+  </form>
+  <section class="panel"><h2>导入结果</h2><div id="data-import-state" class="state" role="status">填写文件与授权信息后开始导入。</div><dl id="data-import-result" class="definition-grid"></dl><div id="data-import-links" class="actions" hidden></div><h3>质量错误与警告</h3><ul id="data-import-issues"><li>尚未执行导入。</li></ul></section>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/data_import.js" defer></script>{% endblock %}

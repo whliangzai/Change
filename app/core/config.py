@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from sqlalchemy.engine import make_url
+
 
 class ConfigurationError(ValueError):
     """Raised when environment configuration violates a safety invariant."""
@@ -25,6 +27,10 @@ class Settings:
     drawdown_stop: Decimal
     execution_price_mode: str
     partial_fill_mode: str
+    database_url: str
+    database_backend: str = "sqlite"
+    development_username: str | None = None
+    development_password: str | None = None
 
 
 _DEFAULTS: dict[str, str] = {
@@ -38,6 +44,7 @@ _DEFAULTS: dict[str, str] = {
     "DRAWDOWN_STOP": "0.08",
     "EXECUTION_PRICE_MODE": "NEXT_OPEN_ADJUSTED",
     "PARTIAL_FILL_MODE": "FULL_OR_NONE",
+    "DATABASE_URL": "sqlite:///./money-mvp.db",
 }
 
 
@@ -67,6 +74,17 @@ def load_settings(overrides: Mapping[str, str] | None = None) -> Settings:
         raise ConfigurationError(
             "AUTH_SECRET_KEY must be at least 32 characters outside development"
         )
+    database_url = values.get("DATABASE_URL", "").strip()
+    if not database_url:
+        raise ConfigurationError("DATABASE_URL must be configured")
+    try:
+        database_backend = make_url(database_url).get_backend_name()
+    except Exception as exc:
+        raise ConfigurationError("DATABASE_URL must be a valid SQLAlchemy URL") from exc
+    if database_backend not in {"sqlite", "postgresql"}:
+        raise ConfigurationError("DATABASE_URL must use SQLite or PostgreSQL")
+    if app_env in {"production", "simulation"} and database_backend != "postgresql":
+        raise ConfigurationError("production and simulation runtimes require PostgreSQL")
     try:
         data_history_start = date.fromisoformat(values["DATA_HISTORY_START"])
         max_positions = int(values["MAX_POSITIONS"])
@@ -99,4 +117,14 @@ def load_settings(overrides: Mapping[str, str] | None = None) -> Settings:
         drawdown_stop=stop,
         execution_price_mode=values["EXECUTION_PRICE_MODE"],
         partial_fill_mode=values["PARTIAL_FILL_MODE"],
+        database_url=database_url,
+        database_backend=database_backend,
+        development_username=(
+            values.get("DEVELOPMENT_USERNAME", "").strip() or "admin"
+            if app_env == "development"
+            else None
+        ),
+        development_password=(
+            values.get("DEVELOPMENT_PASSWORD", "") or "admin" if app_env == "development" else None
+        ),
     )

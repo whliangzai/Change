@@ -75,6 +75,10 @@ def test_backtest_contract_exposes_run_trades_and_report() -> None:
     )
     assert created.status_code == 202
     run_id = created.json()["data"]["run_id"]
+    listed = client.get("/api/v1/backtests?page=1&page_size=50", headers=auth(client))
     assert client.get(f"/api/v1/backtests/{run_id}", headers=auth(client)).status_code == 200
     assert client.get(f"/api/v1/backtests/{run_id}/trades", headers=auth(client)).status_code == 200
     assert client.get(f"/api/v1/backtests/{run_id}/report", headers=auth(client)).status_code == 200
+    assert listed.status_code == 200
+    assert listed.json()["data"]["total"] == 1
+    assert listed.json()["data"]["items"][0]["run_id"] == run_id

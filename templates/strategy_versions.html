@@ -1,1 +1,12 @@
-{% extends "base.html" %}{% block content %}<h1>策略版本</h1><p>策略状态：{{ status|default('未加载') }}；版本：{{ strategy_version|default('未加载') }}</p>{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<section data-page="strategies" class="page-shell">
+  <div class="page-heading"><div><h1>策略版本</h1><p class="muted">仅展示和维护研究策略版本，不产生交易指令。</p></div><button class="primary" type="button" id="strategy-refresh">刷新</button></div>
+  <div id="strategy-state" class="state loading" role="status">正在检查策略接口…</div>
+  <section class="panel"><h2>策略查询</h2><form id="strategy-lookup" class="form-grid"><label>策略版本 ID<input id="strategy-id" name="strategy_id" value="strategy_published" required></label><button class="primary" type="submit">查看差异</button></form><p class="muted">当前 API 提供版本差异查询与创建、审核操作；未提供版本列表接口。</p></section>
+  <section class="panel"><h2>版本详情</h2><dl id="strategy-summary" class="definition-grid"><dt>版本 ID</dt><dd>未加载</dd><dt>状态</dt><dd>由服务端审核接口返回</dd></dl><h3>参数变更</h3><pre id="strategy-diff">未加载</pre><div id="strategy-request-id" class="muted"></div></section>
+  <section class="panel"><h2>创建策略草稿</h2><form id="strategy-create" class="form-grid"><label>策略名称<input name="name" required maxlength="128"></label><label>变更原因<input name="change_reason" required maxlength="1024"></label><label class="wide">参数 JSON<textarea name="parameters" rows="4">{}</textarea></label><button class="primary" type="submit">创建草稿</button></form><div id="strategy-create-state" class="state" role="status"></div></section>
+  <section class="panel"><h2>审核操作</h2><form id="strategy-review" class="form-grid"><label>决策<select name="decision"><option value="SUBMIT">提交审核</option><option value="PUBLISH">发布</option><option value="REJECT">退回草稿</option></select></label><label>审核备注<input name="review_note" required maxlength="2048"></label><button class="primary" type="submit">提交审核</button></form><div id="strategy-review-state" class="state" role="status"></div></section>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/strategy_versions.js" defer></script>{% endblock %}

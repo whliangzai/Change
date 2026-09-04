@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.api.health import _success
@@ -28,6 +28,19 @@ def create_strategy(payload: StrategyCreate, request: Request, principal: User) 
         "SUCCESS",
     )
     return _success(request, record, 201)
+
+
+@router.get("/strategies")
+def list_strategies(
+    request: Request,
+    principal: Reader,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    status: str | None = None,
+) -> JSONResponse:
+    return _success(
+        request, repository(request).list_strategies(principal.user_id, status, page, page_size)
+    )
 
 
 @router.post("/strategies/{strategy_id}/submit-review")

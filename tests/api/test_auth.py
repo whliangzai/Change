@@ -142,3 +142,109 @@ def test_mutating_requests_replay_identical_results_and_reject_key_reuse_with_ne
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
     assert len(audit_writer.events) == 1
+
+
+def test_logout_with_missing_or_invalid_refresh_token_clears_page_cookie_but_returns_401() -> None:
+    client, _ = make_client()
+
+    login(client, "admin", "page-cookie-login")
+    missing = client.post(
+        "/api/v1/auth/logout",
+        headers={"Idempotency-Key": "page-cookie-logout-missing"},
+        json={},
+    )
+
+    assert missing.status_code == 401
+    assert missing.json()["error"]["code"] == "AUTH_REQUIRED"
+    assert 'research_page_access=""' in missing.headers["set-cookie"]
+    assert client.get("/data-import").status_code == 401
+
+    login(client, "admin", "page-cookie-login-empty")
+    empty = client.post(
+        "/api/v1/auth/logout",
+        headers={"Idempotency-Key": "page-cookie-logout-empty"},
+        json={"refresh_token": ""},
+    )
+
+    assert empty.status_code == 401
+    assert empty.json()["error"]["code"] == "AUTH_REQUIRED"
+    assert 'research_page_access=""' in empty.headers["set-cookie"]
+    assert client.get("/daily-flow").status_code == 401
+
+    login(client, "admin", "page-cookie-login-invalid")
+    invalid = client.post(
+        "/api/v1/auth/logout",
+        headers={"Idempotency-Key": "page-cookie-logout-invalid"},
+        json={"refresh_token": "not-a-refresh-token"},
+    )
+
+    assert invalid.status_code == 401
+    assert invalid.json()["error"]["code"] == "AUTH_REQUIRED"
+    assert 'research_page_access=""' in invalid.headers["set-cookie"]
+    assert client.get("/daily-flow").status_code == 401
+
+    tokens = login(client, "admin", "page-cookie-login-revoked")
+    first_logout = client.post(
+        "/api/v1/auth/logout",
+        headers={"Idempotency-Key": "page-cookie-logout-first"},
+        json={"refresh_token": tokens["refresh_token"]},
+    )
+    revoked = client.post(
+        "/api/v1/auth/logout",
+        headers={"Idempotency-Key": "page-cookie-logout-revoked"},
+        json={"refresh_token": tokens["refresh_token"]},
+    )
+
+    assert first_logout.status_code == 200
+    assert revoked.status_code == 401
+    assert revoked.json()["error"]["code"] == "AUTH_REQUIRED"
+    assert 'research_page_access=""' in revoked.headers["set-cookie"]
+
+
+def test_development_account_is_bootstrapped_into_its_database(tmp_path) -> None:
+    settings = load_settings(
+        {
+            "APP_ENV": "development",
+            "AUTH_SECRET_KEY": "development-only-secret-change-me",
+            "DATABASE_URL": f"sqlite:///{tmp_path / 'bootstrap-auth.db'}",
+            "DEVELOPMENT_USERNAME": "local-user",
+            "DEVELOPMENT_PASSWORD": "local-password",
+        }
+    )
+    client = TestClient(create_app(settings=settings))
+
+    response = client.post(
+        "/api/v1/auth/login",
+        headers={"Idempotency-Key": "development-account-login"},
+        json={"username": "local-user", "password": "local-password"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["token_type"] == "bearer"
+    restarted = TestClient(create_app(settings=settings))
+    restarted_response = restarted.post(
+        "/api/v1/auth/login",
+        headers={"Idempotency-Key": "development-account-login-restarted"},
+        json={"username": "local-user", "password": "local-password"},
+    )
+    assert restarted_response.status_code == 200
+
+
+def test_fresh_development_database_bootstraps_documented_admin_account(tmp_path) -> None:
+    settings = load_settings(
+        {
+            "APP_ENV": "development",
+            "AUTH_SECRET_KEY": "development-only-secret-change-me",
+            "DATABASE_URL": f"sqlite:///{tmp_path / 'documented-admin.db'}",
+        }
+    )
+    client = TestClient(create_app(settings=settings))
+
+    response = client.post(
+        "/api/v1/auth/login",
+        headers={"Idempotency-Key": "documented-admin-login"},
+        json={"username": "admin", "password": "admin"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["token_type"] == "bearer"

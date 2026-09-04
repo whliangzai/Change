@@ -1,1 +1,14 @@
-{% extends "base.html" %}{% block content %}<h1>新建回测</h1><p>成本版本：{{ cost_version|default('未指定') }}；规则版本：{{ rule_version|default('未指定') }}</p>{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<section data-page="backtest-create" class="page-shell">
+  <div class="page-heading"><div><h1>新建回测</h1><p class="muted">回测使用历史数据和模拟成交规则；模拟价不是委托价。</p></div><a class="button-link" href="/backtests">查看运行</a></div>
+  <div id="backtest-create-state" class="state" role="status"></div>
+  <form id="backtest-form" class="panel form-grid">
+    <label>数据批次 ID<input name="data_batch_id" id="data-batch-id" value="batch_available" required></label><label>策略版本 ID<input name="strategy_version_id" value="strategy_published" required></label><label>成本版本<input name="cost_config_id" value="cost_v1" required></label><label>规则版本<input name="rule_config_id" value="rule_v1" required></label>
+    <label>开始日期<input type="date" name="start_date" required></label><label>结束日期<input type="date" name="end_date" required></label><label>训练截止<input type="date" name="train_end" required></label><label>验证截止<input type="date" name="valid_end" required></label><label>样本外开始<input type="date" name="oos_start" required></label><label>基准代码<input name="benchmark_symbol" value="000300.SH" required maxlength="32"></label><label>初始权益<input name="initial_equity" inputmode="decimal" value="20000.00" required></label><input type="hidden" name="mode" value="BACKTEST">
+    <div class="wide actions"><button class="primary" type="submit" id="backtest-submit">创建回测</button><span class="muted">创建后由服务端决定运行状态和结果可用性。</span></div>
+  </form>
+  <section class="panel"><h2>可用数据批次</h2><div id="batch-state" class="state loading">正在加载…</div><table id="batch-table"><thead><tr><th>批次</th><th>日期</th><th>状态</th><th>版本</th></tr></thead><tbody></tbody></table></section>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/backtest_create.js" defer></script>{% endblock %}

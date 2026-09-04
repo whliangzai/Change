@@ -1,1 +1,10 @@
-{% extends "base.html" %}{% block content %}<h1>数据质量</h1><p>批次：{{ batch_id|default('未加载') }}；质量：{{ quality_status|default('未加载') }}</p>{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<section class="page data-quality-page" data-page="data-quality" data-api-url="{{ quality_api_url }}">
+  <div class="page-heading"><div><h1>数据质量</h1><p>查看已导入数据批次及质量门禁结果。质量不可用时，相关数据不会进入研究流程。</p></div><a class="api-reference" data-api-url="{{ quality_api_url }}" href="{{ quality_api_url }}">接口</a></div>
+  <form id="batch-filters" class="filters" autocomplete="off"><label>状态<select name="status" id="batch-status"><option value="">全部</option><option value="VALIDATING">校验中</option><option value="AVAILABLE">可用</option><option value="WARNING_AVAILABLE">可用（有警告）</option><option value="UNAVAILABLE">不可用</option></select></label><label>每页<select name="page_size" id="batch-page-size"><option value="20">20</option><option value="50" selected>50</option><option value="100">100</option></select></label><button type="submit">查询</button></form>
+  <div id="batch-state" class="state" role="status" aria-live="polite">正在加载数据批次…</div>
+  <div class="table-wrap"><table id="batch-table"><thead><tr><th>批次</th><th>数据日期</th><th>来源</th><th>类型</th><th>版本</th><th>记录数</th><th>质量状态</th><th>操作</th></tr></thead><tbody></tbody></table></div><nav id="batch-pagination" class="pagination" aria-label="数据批次分页"></nav>
+  <section id="quality-detail" class="detail-panel" hidden><div class="detail-heading"><h2>质量明细</h2><button id="quality-close" type="button">关闭</button></div><div id="quality-state" class="state" role="status" aria-live="polite"></div><dl id="quality-summary" class="definition-grid"></dl><h3>错误与警告</h3><ul id="quality-issues" class="issue-list"></ul><p class="request-id" id="quality-request-id"></p></section>
+</section><script src="/static/js/data_quality.js" defer></script>
+{% endblock %}

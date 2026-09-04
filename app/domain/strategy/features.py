@@ -40,6 +40,7 @@ class DailyBar:
     is_delisted: bool = False
     is_limit_up: bool = False
     industry: str | None = None
+    list_date: date | None = None
 
 
 def _mean(values: Sequence[Decimal]) -> Decimal | None:
