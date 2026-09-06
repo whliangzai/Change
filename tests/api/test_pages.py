@@ -106,6 +106,30 @@ def test_research_pages_ship_interactive_api_clients_and_assets() -> None:
     assert "/api/v1/backtests" in backtest_client.text
 
 
+def test_base_shell_provides_landmarks_focus_and_responsive_navigation() -> None:
+    response = client().get("/dashboard")
+
+    assert 'class="skip-link"' in response.text
+    assert 'id="main-content"' in response.text
+    assert 'aria-label="主导航"' in response.text
+    assert "button:focus-visible" in response.text
+    assert "@media(max-width:700px)" in response.text
+    assert "data-admin-nav hidden" in response.text
+
+
+def test_login_page_exposes_field_errors_and_blocks_duplicate_submission() -> None:
+    response = client().get("/login")
+
+    assert 'id="login-username"' in response.text
+    assert 'id="login-password"' in response.text
+    assert 'id="username-error"' in response.text
+    assert 'id="password-error"' in response.text
+    assert "isSubmitting" in response.text
+    assert 'aria-live="polite"' in response.text
+    assert 'autocomplete="username"' in response.text
+    assert 'autocomplete="current-password"' in response.text
+
+
 def test_data_pages_use_the_shared_authenticated_api_client() -> None:
     test_client = client()
 

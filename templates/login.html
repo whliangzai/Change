@@ -1,3 +1,67 @@
 {% extends "base.html" %}
-{% block content %}<section style="max-width:420px;margin:8vh auto 0;background:#fff;border:1px solid #d9e0e7;border-radius:6px;padding:28px"><h1 style="margin-top:0">登录研究验证系统</h1><p style="color:#5d6b78">请使用本地研究账户登录。系统仅用于研究、回测、审计及人工记录。</p><div id="login-state" class="state" hidden role="status" aria-live="polite"></div><form id="login-form" novalidate><label style="display:block;margin:14px 0">用户名<input name="username" autocomplete="username" required style="display:block;width:100%;padding:9px;border:1px solid #b8c4ce;border-radius:4px;margin-top:5px"></label><label style="display:block;margin:14px 0">密码<input name="password" type="password" autocomplete="current-password" required style="display:block;width:100%;padding:9px;border:1px solid #b8c4ce;border-radius:4px;margin-top:5px"></label><button class="primary" type="submit" style="width:100%">登录</button></form></section>{% endblock %}
-{% block scripts %}<script>(function(){const f=document.getElementById("login-form"),s=document.getElementById("login-state");if(!f)return;f.addEventListener("submit",async e=>{e.preventDefault();const b=f.querySelector("button"),d=Object.fromEntries(new FormData(f).entries());s.hidden=false;if(!d.username||!d.password){ResearchApp.renderState(s,"error","请输入用户名和密码。");return}b.disabled=true;ResearchApp.renderState(s,"loading","正在验证账户...");try{const p=await ResearchApp.readJson(await ResearchApp.apiFetch("/api/v1/auth/login",{method:"POST",body:d}));ResearchApp.saveTokens(p.data);ResearchApp.renderState(s,"success","登录成功，正在进入系统。",p.request_id);const n=new URLSearchParams(location.search).get("next");location.href=n&&n.startsWith("/")?n:"/dashboard"}catch(x){ResearchApp.renderState(s,"error",x.message||"登录失败。");b.disabled=false}})})();</script>{% endblock %}
+{% block content %}
+<section class="panel login-panel" aria-labelledby="login-title">
+  <h1 id="login-title">登录研究验证系统</h1>
+  <p>请使用本地研究账户登录。系统仅用于研究、回测、审计及人工记录，不自动下单。</p>
+  <div id="login-state" class="state" hidden role="status" aria-live="polite"></div>
+  <form id="login-form" novalidate aria-describedby="login-state">
+    <label class="login-field" for="login-username">
+      用户名
+      <input id="login-username" name="username" autocomplete="username" required aria-describedby="username-error">
+    </label>
+    <p id="username-error" class="field-error" hidden></p>
+    <label class="login-field" for="login-password">
+      密码
+      <input id="login-password" name="password" type="password" autocomplete="current-password" required aria-describedby="password-error">
+    </label>
+    <p id="password-error" class="field-error" hidden></p>
+    <button class="primary login-submit" type="submit">登录</button>
+  </form>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  (function () {
+    const form = document.getElementById("login-form");
+    const state = document.getElementById("login-state");
+    if (!form) return;
+    const submit = form.querySelector('button[type="submit"]');
+    const username = document.getElementById("login-username");
+    const password = document.getElementById("login-password");
+    const usernameError = document.getElementById("username-error");
+    const passwordError = document.getElementById("password-error");
+    let isSubmitting = false;
+    const clearFieldError = (field, target) => { field.removeAttribute("aria-invalid"); target.hidden = true; target.textContent = ""; };
+    const showFieldError = (field, target, message) => { field.setAttribute("aria-invalid", "true"); target.hidden = false; target.textContent = message; };
+    const restoreSubmit = () => { isSubmitting = false; submit.disabled = false; submit.textContent = "登录"; };
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      if (isSubmitting) return;
+      clearFieldError(username, usernameError);
+      clearFieldError(password, passwordError);
+      const data = Object.fromEntries(new FormData(form).entries());
+      const userValue = String(data.username || "").trim();
+      const passwordValue = String(data.password || "");
+      let firstInvalid = null;
+      if (!userValue) { showFieldError(username, usernameError, "请输入用户名。"); firstInvalid = username; }
+      if (!passwordValue) { showFieldError(password, passwordError, "请输入密码。"); firstInvalid = firstInvalid || password; }
+      if (firstInvalid) { ResearchApp.renderState(state, "error", "请检查标记的登录字段后重试。"); firstInvalid.focus(); return; }
+      isSubmitting = true;
+      submit.disabled = true;
+      submit.textContent = "正在登录...";
+      ResearchApp.renderState(state, "loading", "正在验证账户...");
+      try {
+        const payload = await ResearchApp.readJson(await ResearchApp.apiFetch("/api/v1/auth/login", { method: "POST", body: { username: userValue, password: passwordValue } }));
+        ResearchApp.saveTokens(payload.data);
+        ResearchApp.renderState(state, "success", "登录成功，正在进入系统。", payload.request_id);
+        const next = new URLSearchParams(location.search).get("next");
+        const destination = next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
+        window.setTimeout(() => { location.href = destination; }, 200);
+      } catch (error) {
+        ResearchApp.renderState(state, "error", error.message || "登录失败，请检查账户信息或稍后重试。");
+        restoreSubmit();
+      }
+    });
+  }());
+</script>
+{% endblock %}

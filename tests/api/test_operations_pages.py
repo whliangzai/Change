@@ -34,3 +34,19 @@ def test_operations_pages_bind_independent_real_api_clients() -> None:
         assert script in response.text
         assert api_path in response.text
         assert "不自动下单" in response.text
+
+
+def test_overview_and_report_pages_expose_recoverable_state_regions() -> None:
+    test_client = client()
+    dashboard = test_client.get("/dashboard")
+    daily_report = test_client.get("/daily-reports/2026-09-03")
+    reports = test_client.get("/reports")
+    dashboard_script = test_client.get("/static/js/dashboard.js")
+
+    assert 'id="dashboard-data-availability"' in dashboard.text
+    assert "数据来源" in dashboard_script.text
+    assert "版本" in dashboard_script.text
+    assert 'id="daily-report-unavailable" class="state unavailable"' in daily_report.text
+    assert daily_report.text.count('class="table-wrap"') >= 3
+    assert 'id="report-selection-state"' in reports.text
+    assert 'id="report-unavailable" class="state unavailable"' in reports.text

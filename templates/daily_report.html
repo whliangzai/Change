@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
-<section data-page="daily-report" data-api-url="/api/v1/daily-reports/{{ report_date }}">
-  <div class="page-heading"><div><h1>日报</h1><p class="muted">报告日期：{{ report_date }}。日报只展示研究运行结果，不能发出委托。</p></div><button class="primary" id="daily-report-refresh" type="button">刷新</button></div>
+<section class="page-shell" data-page="daily-report" data-api-url="/api/v1/daily-reports/{{ report_date }}">
+  <div class="page-heading"><div><h1>日报</h1><p class="muted">报告日期：{{ report_date }}。日报只展示研究运行结果，不能发出委托。</p></div><button id="daily-report-refresh" type="button">刷新日报</button></div>
   <div id="daily-report-state" class="state loading" role="status">正在加载日报…</div>
-  <section class="panel"><h2>运行与风险</h2><dl id="daily-report-summary" class="definition-grid"></dl><div id="daily-report-unavailable" class="state error" hidden></div></section>
-  <section class="panel"><h2>数据与市场开关</h2><dl id="daily-report-quality" class="definition-grid"></dl></section>
-  <section class="panel"><h2>账户与持仓</h2><div id="daily-report-account" class="empty-state">暂无账户快照。</div><table id="daily-report-holdings"><thead><tr><th>标的</th><th>数量</th><th>可用数量</th><th>成本</th><th>市值</th></tr></thead><tbody></tbody></table></section>
-  <section class="panel"><h2>候选与计划</h2><table id="daily-report-candidates"><thead><tr><th>标的</th><th>条件</th><th>分数</th><th>风险标签</th></tr></thead><tbody></tbody></table><table id="daily-report-plans"><thead><tr><th>计划号</th><th>方向</th><th>数量</th><th>状态</th><th>到期/执行日</th></tr></thead><tbody></tbody></table></section>
+  <section class="panel"><h2>运行与风险</h2><dl id="daily-report-summary" class="definition-grid"></dl><div id="daily-report-unavailable" class="state unavailable" role="status" hidden></div></section>
+  <section class="panel"><h2>数据来源与市场开关</h2><dl id="daily-report-quality" class="definition-grid"></dl></section>
+  <section class="panel"><h2>账户与持仓</h2><dl id="daily-report-account" class="definition-grid"></dl><div class="table-wrap"><table id="daily-report-holdings"><thead><tr><th>标的</th><th>数量</th><th>可用数量</th><th>成本</th><th>市值</th></tr></thead><tbody></tbody></table></div></section>
+  <section class="panel"><h2>候选与计划</h2><div class="table-wrap"><table id="daily-report-candidates"><thead><tr><th>标的</th><th>条件</th><th>分数</th><th>风险标签</th></tr></thead><tbody></tbody></table></div><div class="table-wrap"><table id="daily-report-plans"><thead><tr><th>计划号</th><th>方向</th><th>数量</th><th>状态</th><th>到期/执行日</th></tr></thead><tbody></tbody></table></div></section>
   <p class="compliance-local">研究用途；不荐股、不构成投资建议；不承诺收益；不自动下单。</p>
 </section>
 {% endblock %}

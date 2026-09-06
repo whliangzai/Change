@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
-<section data-page="reports" data-api-url="/api/v1/backtests">
-  <div class="page-heading"><div><h1>报告与偏差</h1><p class="muted">报告以服务端保存的回测结果为准；模拟成本与模拟价格均不是委托依据。</p></div><button class="primary" id="reports-refresh" type="button">刷新运行</button></div>
+<section class="page-shell" data-page="reports" data-api-url="/api/v1/backtests">
+  <div class="page-heading"><div><h1>报告与偏差</h1><p class="muted">报告以服务端保存的回测结果为准；模拟成本与模拟价格均不是委托依据。</p></div><button id="reports-refresh" type="button">刷新运行</button></div>
   <div id="reports-state" class="state loading" role="status">正在加载回测运行…</div>
-  <section class="panel"><label>选择回测运行<select id="report-run-select"><option value="">请选择可查看的运行</option></select></label><button id="report-load" type="button">查看报告</button></section>
-  <section class="panel"><h2>运行版本与可用性</h2><dl id="report-summary" class="definition-grid"></dl><div id="report-unavailable" class="state error" hidden></div></section>
+  <section class="panel"><div class="filters"><label>选择回测运行<select id="report-run-select" disabled><option value="">正在获取可查看的运行</option></select></label><button id="report-load" type="button" disabled>查看报告</button></div><div id="report-selection-state" class="state unavailable" role="status">先选择服务端保存的回测运行以查看报告。</div></section>
+  <section class="panel"><h2>运行版本与可用性</h2><dl id="report-summary" class="definition-grid"></dl><div id="report-unavailable" class="state unavailable" role="status" hidden></div></section>
   <section class="panel"><h2>策略绩效与基准比较</h2><dl id="report-metrics" class="definition-grid"></dl></section>
-  <section class="panel"><h2>成本与计划/实际偏差</h2><pre id="report-deviation" class="report-json">尚未选择报告。</pre></section>
+  <section class="panel"><h2>成本与计划/实际偏差</h2><div class="table-wrap"><pre id="report-deviation" class="report-json" tabindex="0">尚未选择报告。</pre></div></section>
   <p class="compliance-local">研究用途；不荐股、不构成投资建议；不承诺收益；不自动下单。</p>
 </section>
 {% endblock %}

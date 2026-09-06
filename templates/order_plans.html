@@ -1,12 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
 <section data-page="order-plans" data-api-url="/api/v1/order-plans">
-  <div class="page-heading"><div><h1>人工计划确认</h1><p class="muted">计划永远不等于成交。确认或跳过由服务端 RBAC、风险状态和版本号共同校验。</p></div></div>
+  <div class="page-heading"><div><h1>人工计划确认</h1><p class="muted">研究用途的计划复核。模拟参考价，不是委托价；仅记录人工决定，须待服务端受理，不会自动下单。</p></div></div>
   <form id="plan-filter" class="panel form-grid"><label>执行日期<input type="date" id="plan-execution-date" name="execution_date" value="{{ data_date }}" required></label><div class="actions"><button class="primary" type="submit">查询计划</button></div></form>
-  <div id="plan-state" class="state loading" role="status">请选择执行日期后加载。</div>
-  <section class="panel"><div class="table-wrap"><table id="plan-table"><thead><tr><th>计划号</th><th>方向</th><th>标的</th><th>数量</th><th>参考价</th><th>预估成本</th><th>风险</th><th>状态</th><th>版本</th><th>操作</th></tr></thead><tbody></tbody></table></div><div id="plan-pagination" class="pagination"></div></section>
-  <section id="plan-decision-panel" class="panel" hidden><h2>人工审核</h2><p id="plan-decision-target" class="muted"></p><form id="plan-decision-form" class="form-grid"><input type="hidden" name="plan_id"><input type="hidden" name="expected_version"><label>决定<select name="decision"><option value="CONFIRM">确认计划</option><option value="SKIP">跳过计划</option></select></label><label class="wide">审核备注<textarea name="review_note" required minlength="1" maxlength="2048" placeholder="记录人工核对依据"></textarea></label><div class="actions wide"><button class="primary" id="plan-decision-submit" type="submit">提交人工决定</button><button type="button" id="plan-decision-cancel">取消</button></div></form></section>
-  <p class="compliance-local">研究用途；计划不等于成交；无券商下单、撤单或资金划转能力。</p>
+  <div id="plan-state" class="state loading" role="status" aria-live="polite">正在获取指定日期的可见计划。</div>
+  <div id="plan-unavailable" class="state unavailable" role="status" hidden>不可用原因：尚未选定可审核计划或计划前置条件未满足。恢复路径：查询其他日期，或在日终流程生成计划后刷新。</div>
+  <div id="plan-permission" class="state permission" role="status" hidden>无权限：当前角色不能记录人工决定。恢复路径：使用具备审核权限的账户登录；服务端 RBAC 为最终约束。</div>
+  <section class="panel"><div class="table-wrap"><table id="plan-table"><thead><tr><th>计划号</th><th>方向</th><th>标的</th><th class="numeric">数量</th><th class="numeric">模拟参考价</th><th class="numeric">预估成本</th><th>风险</th><th>状态</th><th>版本</th><th>操作</th></tr></thead><tbody></tbody></table></div><div id="plan-pagination" class="pagination"></div></section>
+  <section id="plan-decision-panel" class="panel" hidden aria-labelledby="plan-decision-title"><h2 id="plan-decision-title">人工审核决定</h2><p id="plan-decision-target" class="muted"></p><dl id="plan-decision-evidence" class="definition-grid"></dl><div id="plan-decision-state" class="state" role="status" aria-live="polite" hidden></div><div id="plan-decision-unavailable" class="state unavailable" role="status" hidden></div><form id="plan-decision-form" class="form-grid"><input type="hidden" name="plan_id"><input type="hidden" name="expected_version"><label>人工决定<select name="decision"><option value="CONFIRM">确认计划</option><option value="SKIP">跳过计划</option></select></label><label class="wide">审核备注<textarea name="review_note" required minlength="1" maxlength="2048" placeholder="必填：记录人工核对依据、风险判断或跳过原因" aria-describedby="plan-review-note-hint"></textarea><span id="plan-review-note-hint" class="muted">服务端将校验审核权限、风险状态、计划状态和当前版本。</span></label><div class="actions wide"><button class="primary" id="plan-decision-submit" type="submit">记录人工决定</button><button type="button" id="plan-decision-cancel">取消</button></div></form></section>
+  <p class="compliance-local">计划不等于成交。页面只提交人工确认或跳过决定；后续成交必须由人工另行记录。</p>
 </section>
 {% endblock %}
 {% block scripts %}<script src="/static/js/order_plans.js" defer></script>{% endblock %}

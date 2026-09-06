@@ -1,10 +1,68 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="page universe-page" data-page="universe" data-pool-api-url="{{ pool_api_url }}" data-bars-api-url="{{ bars_api_url }}">
-  <div class="page-heading"><div><h1>股票池与日线</h1><p>当前股票池用于当日研究；历史股票池按交易日保留来源批次和排除原因。</p></div><a class="api-reference" data-api-url="{{ pool_api_url }}" href="{{ pool_api_url }}">股票池接口</a></div>
-  <form id="universe-filters" class="filters" autocomplete="off"><label>交易日<input type="date" id="trade-date" name="trade_date" value="{{ trade_date }}" required></label><label>状态<select id="pool-status" name="status"><option value="">全部</option><option value="ELIGIBLE">入选</option><option value="EXCLUDED">排除</option></select></label><label>每页<select id="pool-page-size" name="page_size"><option value="20">20</option><option value="50" selected>50</option><option value="100">100</option></select></label><button type="submit">查询股票池</button></form>
-  <div class="subtabs" role="tablist"><button type="button" class="subtab is-active" data-view="current" role="tab" aria-selected="true">当前股票池</button><button type="button" class="subtab" data-view="history" role="tab" aria-selected="false">历史股票池</button></div><div id="pool-state" class="state" role="status" aria-live="polite">正在加载股票池…</div>
-  <div class="table-wrap"><table id="pool-table"><thead><tr><th>代码</th><th>交易所</th><th>板块</th><th>状态</th><th>状态来源</th><th>来源批次</th><th>上市交易日</th><th>20日成交额中位数</th><th>排除原因</th></tr></thead><tbody></tbody></table></div><nav id="pool-pagination" class="pagination" aria-label="股票池分页"></nav>
-  <section class="bars-panel"><div class="detail-heading"><h2>日线行情</h2><span>仅展示授权数据；价格为数据供应商行情，不是委托价。</span></div><form id="bars-filters" class="filters"><label>股票代码<input id="bar-symbol" name="symbol" placeholder="例如 600000.SH"></label><button type="submit">查询日线</button></form><div id="bars-state" class="state" role="status" aria-live="polite"></div><div class="table-wrap"><table id="bars-table"><thead><tr><th>代码</th><th>日期</th><th>开</th><th>高</th><th>低</th><th>收</th><th>成交量</th><th>成交额</th><th>数据批次</th></tr></thead><tbody></tbody></table></div><nav id="bars-pagination" class="pagination" aria-label="日线分页"></nav></section>
-</section><script src="/static/js/universe.js" defer></script>
+  <div class="page-heading">
+    <div>
+      <h1>股票池与日线</h1>
+      <p>按指定历史交易日复核股票池、来源批次与排除原因；展示内容仅用于研究。</p>
+    </div>
+    <a class="api-reference" data-api-url="{{ pool_api_url }}" href="{{ pool_api_url }}">股票池接口</a>
+  </div>
+
+  <section class="panel" aria-labelledby="universe-filters-title">
+    <div class="detail-heading">
+      <div>
+        <h2 id="universe-filters-title">历史交易日筛选</h2>
+        <p class="muted">股票池按该交易日的可用信息生成，不以当前状态替代历史记录。</p>
+      </div>
+      <p id="pool-result-count" class="muted" aria-live="polite">正在准备股票池筛选…</p>
+    </div>
+    <form id="universe-filters" class="filters" autocomplete="off">
+      <label>交易日<input type="date" id="trade-date" name="trade_date" value="{{ trade_date }}" required></label>
+      <label>入选状态
+        <select id="pool-status" name="status"><option value="">全部</option><option value="ELIGIBLE">入选</option><option value="EXCLUDED">排除</option></select>
+      </label>
+      <label>每页条数
+        <select id="pool-page-size" name="page_size"><option value="20">20</option><option value="50" selected>50</option><option value="100">100</option></select>
+      </label>
+      <button type="submit">应用筛选</button>
+      <button id="pool-reset" type="button">重置筛选</button>
+    </form>
+  </section>
+
+  <div id="pool-state" class="state loading" role="status" aria-live="polite" aria-atomic="true">正在加载该交易日的股票池，列表会保留在当前位置…</div>
+  <div class="table-wrap" tabindex="0" aria-label="股票池列表，可横向滚动">
+    <table id="pool-table" aria-describedby="pool-result-count pool-state" aria-busy="true">
+      <caption>历史股票池、状态来源与排除依据</caption>
+      <thead><tr><th scope="col">代码</th><th scope="col">交易所</th><th scope="col">板块</th><th scope="col">状态</th><th scope="col">状态来源</th><th scope="col">来源批次</th><th scope="col">上市交易日数</th><th scope="col">20日成交额中位数（元）</th><th scope="col">排除原因</th></tr></thead>
+      <tbody><tr><td colspan="9">正在加载股票池…</td></tr></tbody>
+    </table>
+  </div>
+  <nav id="pool-pagination" class="pagination" aria-label="股票池分页"></nav>
+
+  <section class="panel bars-panel" aria-labelledby="bars-title">
+    <div class="detail-heading">
+      <div>
+        <h2 id="bars-title">授权日线行情</h2>
+        <p class="muted">仅展示授权数据；价格为数据供应商行情，不是委托价。</p>
+      </div>
+      <p id="bars-result-count" class="muted" aria-live="polite">日线使用上方的历史交易日。</p>
+    </div>
+    <form id="bars-filters" class="filters" autocomplete="off">
+      <label>股票代码<input id="bar-symbol" name="symbol" placeholder="例如 600000.SH" autocomplete="off"></label>
+      <button type="submit">查询日线</button>
+      <button id="bars-reset" type="button">清除代码</button>
+    </form>
+    <div id="bars-state" class="state" role="status" aria-live="polite" aria-atomic="true">等待查询日线行情。</div>
+    <div class="table-wrap" tabindex="0" aria-label="授权日线行情列表，可横向滚动">
+      <table id="bars-table" aria-describedby="bars-result-count bars-state" aria-busy="false">
+        <caption>授权数据供应商日线行情，非委托价</caption>
+        <thead><tr><th scope="col">代码</th><th scope="col">日期</th><th scope="col">开盘价</th><th scope="col">最高价</th><th scope="col">最低价</th><th scope="col">收盘价</th><th scope="col">成交量</th><th scope="col">成交额（元）</th><th scope="col">数据批次</th></tr></thead>
+        <tbody><tr><td colspan="9">等待查询日线行情。</td></tr></tbody>
+      </table>
+    </div>
+    <nav id="bars-pagination" class="pagination" aria-label="日线分页"></nav>
+  </section>
+</section>
+<script src="/static/js/universe.js" defer></script>
 {% endblock %}

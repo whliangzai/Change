@@ -1,10 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
 <section data-page="admin" data-api-url="/api/v1/jobs">
-  <div class="page-heading"><div><h1>管理与审计</h1><p class="muted">任务重试与审计查看必须通过服务端角色校验；页面不会直接修改业务记录。</p></div><button class="primary" id="admin-refresh" type="button">刷新</button></div>
+  <div class="page-heading"><div><h1>管理与审计</h1><p class="muted">任务重试与审计查看必须通过服务端角色校验；页面不会直接修改业务记录。</p></div><button id="admin-refresh" type="button">刷新</button></div>
   <div id="admin-state" class="state loading" role="status">正在加载管理数据…</div>
-  <section class="panel"><h2>任务状态</h2><div class="table-wrap"><table id="jobs-table"><thead><tr><th>任务 ID</th><th>类型</th><th>状态</th><th>失败原因</th><th>创建时间</th><th>操作</th></tr></thead><tbody></tbody></table></div><div id="jobs-pagination" class="pagination"></div></section>
-  <section class="panel"><h2>审计事件</h2><div class="table-wrap"><table id="audit-table"><thead><tr><th>时间</th><th>操作者</th><th>角色</th><th>动作</th><th>对象</th><th>结果</th><th>请求号</th></tr></thead><tbody></tbody></table></div><div id="audit-pagination" class="pagination"></div></section>
+  <div id="admin-permission" class="state unavailable" role="status">管理数据与重试权限由服务端实时判定；无权限时不会显示受限任务详情。</div>
+  <section id="retry-confirmation" class="panel" hidden><h2>确认请求重试</h2><p id="retry-target" class="muted"></p><p id="retry-impact" class="muted">影响：只向服务端提交该任务的重试请求；是否可执行、是否已在运行及最终状态由服务端状态机决定。</p><p class="muted">不可重复：请求附带幂等键；同一操作已受理或正在运行时，服务端可以拒绝重复请求。</p><label>备注（当前接口不接受备注，仅供操作人复核）<textarea id="retry-note" maxlength="2048" placeholder="可选：说明为何需要重试" disabled></textarea></label><div id="retry-form-error" class="field-error" role="alert" hidden></div><div class="actions"><button id="retry-cancel" type="button">取消</button><button id="retry-confirm" class="primary" type="button" data-submit-label="确认请求重试">确认请求重试</button></div></section>
+  <section class="panel"><h2>任务状态</h2><p id="jobs-result-count" class="muted" aria-live="polite"></p><div class="table-wrap"><table id="jobs-table"><thead><tr><th>任务 ID</th><th>对象/类型</th><th>状态</th><th>失败原因</th><th class="date-value">创建时间</th><th>操作</th></tr></thead><tbody></tbody></table></div><div id="jobs-pagination" class="pagination"></div></section>
+  <section class="panel"><h2>审计事件</h2><p id="audit-result-count" class="muted" aria-live="polite"></p><div class="table-wrap"><table id="audit-table"><thead><tr><th class="date-value">时间</th><th>操作者</th><th>角色</th><th>动作</th><th>对象</th><th>结果</th><th>请求号</th></tr></thead><tbody></tbody></table></div><div id="audit-pagination" class="pagination"></div></section>
   <p class="compliance-local">管理操作保留审计记录；研究系统不提供自动交易能力。</p>
 </section>
 {% endblock %}
