@@ -8,6 +8,8 @@ from app.application.backtest_service import (
 )
 from app.application.daily_flow import DailyFlow
 from app.application.data_import_service import DataImportApplicationService
+from app.application.ifind_ingestion import IFindIngestionError, IFindIngestionService
+from app.application.tushare_ingestion import TushareIngestionError, TushareIngestionService
 
 __all__ = [
     "BacktestApplicationResult",
@@ -16,4 +18,8 @@ __all__ = [
     "BacktestRequest",
     "DailyFlow",
     "DataImportApplicationService",
+    "IFindIngestionError",
+    "IFindIngestionService",
+    "TushareIngestionError",
+    "TushareIngestionService",
 ]

@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
 <section data-page="data-import" data-api-url="/api/v1/data/imports" class="page-shell">
-  <div class="page-heading"><div><h1>导入授权行情</h1><p class="muted">仅管理员可导入本地 CSV 或 Parquet。系统不会下载、抓取或使用未授权行情。</p></div><a class="button-link" href="/data-quality">查看数据质量</a></div>
+  <div class="page-heading"><div><h1>导入授权行情</h1><p class="muted">管理员可导入本地 CSV/Parquet；Tushare 是受授权的可发布主源，AKShare 仅作只读校验，所有来源均需通过质量闸门。</p></div><a class="button-link" href="/data-quality">查看数据质量</a></div>
   <div id="data-import-permission" class="state loading" role="status">正在确认导入权限与本地授权边界…</div>
-  <div id="data-import-prerequisite" class="state unavailable" role="status">导入只接受已获授权的本地文件；完成后仍须通过数据质量闸门才能用于后续研究。</div>
+  <div id="data-import-prerequisite" class="state unavailable" role="status">本地文件、Tushare 主批次和 AKShare 校验证据均须保留来源与授权边界；仅完整 Tushare 主批次可用于后续研究，AKShare 差异只产生告警。</div>
   <form id="data-import-form" class="panel form-grid" novalidate>
     <div id="data-import-form-error" class="state error wide" role="alert" hidden></div>
     <label class="wide" for="data-import-file">本地文件路径<span class="muted">必填；仅限获授权的本地 CSV 或 Parquet。</span><input id="data-import-file" name="file_location" required maxlength="1024" aria-describedby="data-import-file-error" placeholder="F:\\PROJECT\\Money\\data\\authorized_sample.csv"><span id="data-import-file-error" class="field-error" hidden></span></label>

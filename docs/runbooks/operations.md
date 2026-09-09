@@ -8,6 +8,52 @@
 4. Treat order plans as review documents only. Human confirmation and actual fills remain separate records; no job submits, cancels, repairs, or automatically recovers an order.
 5. Verify the report artifact manifest and record the operator review.
 
+## iFinD HTTP import scheduling
+
+The external scheduler calls `POST /api/v1/admin/data-imports/ifind/{business_date}`
+every trading day at 18:30 Asia/Shanghai with an `Idempotency-Key` and
+`scope=pilot` (or `scope=full` after pilot acceptance). The call must use an ADMIN
+credential. The returned task key is stable, so the same endpoint is also used by
+an administrator to backfill or replay a date; do not invoke the worker directly.
+
+The pilot scope is fixed to `000001.SZ`, `600000.SH`, `000300.SH`, and `000001.SH`.
+Before enabling full history, retain evidence for 2025-01-02 through 2025-06-30
+covering daily bars, adjustment factors, calendar, listing/delisting dates, daily
+status, and effective industry membership. The mapping-permission recording,
+raw/standardized manifest hashes, and quality results must all be approved by an
+administrator. A missing historical field or unavailable dependency blocks the
+batch and cannot be promoted to backtest/report input.
+
+After pilot approval, schedule full imports in date and security chunks from
+2016-01-01 through the latest completed trading date. Each successful batch has
+its own immutable manifests and stable task key, so recovery and replay are
+performed one business date at a time. No full backfill is authorized while any
+pilot field, license, hash, or quality evidence is incomplete.
+
+## Tushare primary import and AKShare validation
+
+Tushare is the current primary HTTP source; the existing iFinD path remains available for
+compatibility. Configure `TUSHARE_ENABLED=true` and
+provide `TUSHARE_TOKEN` only through the deployment secret environment; never pass
+it in a task payload, URL, or audit record. The scheduler calls
+`POST /api/v1/admin/data-imports/tushare/{business_date}?scope=pilot` at 18:30
+Asia/Shanghai with an ADMIN credential and `Idempotency-Key`. The stable task key is
+`data-import:{date}:tushare-{scope}`, so the same operation is used for replay and
+date-by-date backfill.
+
+The fixed pilot is `000001.SZ`, `600000.SH`, `000300.SH`, and `000001.SH`. Do not
+use `scope=full` until an administrator has reviewed a continuous pilot window and
+all calendar, OHLCV/amount, adjustment-factor, dated ST/suspension, listing/delisting,
+and dated Shenwan industry evidence. Full backfill is one business date at a time
+from 2016-01-01 through the last completed trading date.
+Set `TUSHARE_FULL_ENABLED=true` only after that approval; it defaults to false.
+
+AKShare is validation-only. It archives calendar and unadjusted OHLCV evidence and
+creates `WARNING` details for missing data, connectivity failures, or configured
+price/volume/amount differences. Those warnings yield `WARNING_AVAILABLE` and do not
+replace, repair, or block a complete Tushare batch. Any incomplete Tushare requirement
+is `UNAVAILABLE` and blocks downstream publication.
+
 ## Failure handling
 
 Dependency failures may retry using the same idempotency key. Data-unavailable, validation, rule, and state errors do not receive blind retries. A repeated key replays a completed result and must not duplicate plans, fees, fills, or report files. Inspect `job_run` for business date, run number, attempt, stage, and redacted error summary.

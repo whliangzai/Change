@@ -5,16 +5,16 @@
 | 文档名称 | 06-API接口设计 |
 | 版本 | v1.1.0 |
 | 状态 | 本地 MVP 路由已实现；外部依赖联调待执行 |
-| 最后更新时间 | 2026-09-04 |
+| 最后更新时间 | 2026-09-09 |
 | 关联文档 | [需求规格说明书](./02-需求规格说明书.md)、[产品流程与页面说明](./03-产品流程与页面说明.md)、[架构设计](./04-系统架构设计.md)、[数据库设计](./05-数据库设计.md)、[开发规范](./07-开发规范与工程约定.md) |
 
 > API 路径和字段是内部实现契约，首期按 v1.1.0 基线实施；仍允许在开发阶段通过版本化变更调整。基础路径为 `/api/v1`，传输 JSON/UTF-8，金额和价格以字符串返回以避免精度丢失；系统不提供自动下单 API。
 
-> 实现核对（2026-09-04）：本地代码已挂载认证、数据导入/查询、策略、回测、日报/计划/人工成交、管理员任务/审计和页面路由；持久化开发路径使用 SQLite 或配置的 PostgreSQL。本文记录的是接口契约，不把本地测试替代为 PostgreSQL/Redis/Docker 联调通过；`broker/order-submit`、资金划转和自动恢复路由仍不存在。
+> 实现核对（2026-09-09）：本地代码已挂载认证、文件/供应商数据导入与查询、策略、回测、日报/计划/人工成交、管理员任务/审计和页面路由；持久化开发路径使用 SQLite 或配置的 PostgreSQL。本文记录的是接口契约，不把本地测试替代为 PostgreSQL/Redis/Docker 联调通过；`broker/order-submit`、资金划转、自动切源和自动恢复路由仍不存在。
 
 ## 0. v1.1.0 配置决策
 
-- 数据导入接口只接收合法授权的 CSV/Parquet 文件，不内置未授权供应商抓取器。
+- 文件导入接口只接收合法授权的 CSV/Parquet；另有受 ADMIN 保护的 iFinD/Tushare 队列入口。Tushare 是当前主推的 HTTP 主源，iFinD 保留兼容路径，AKShare 只产生非阻断校验证据。
 - 回测默认起始日为 2016-01-01，主基准为 `000300.SH`，次基准为 `000001.SH`，并计算股票池等权基准。
 - 成交模型为 `NEXT_OPEN_ADJUSTED`：买入开盘价上浮 0.20%，卖出开盘价下调 0.20%；回测部分成交模式为 `FULL_OR_NONE`。
 - 计划确认截止下一交易日 09:25；8% 回撤恢复需要二次确认，接口不得提供自动恢复或自动下单动作。
@@ -94,6 +94,8 @@
 | API-OPS-007 | `GET /exports/{id}` | USER | 查询异步导出状态 |
 | API-ADMIN-001 | `GET /jobs`、`POST /jobs/{id}/retry` | ADMIN | 查看/重试任务 |
 | API-ADMIN-002 | `GET /audit-events` | REVIEWER/ADMIN | 查询审计 |
+| API-ADMIN-003 | `POST /admin/data-imports/ifind/{business_date}?scope=pilot\|full` | ADMIN | 队列化 iFinD 导入 |
+| API-ADMIN-004 | `POST /admin/data-imports/tushare/{business_date}?scope=pilot\|full` | ADMIN | 队列化 Tushare 主源导入 |
 
 ## 4. 关键请求与返回
 
@@ -175,6 +177,15 @@
 `GET /api/v1/daily-reports/2026-09-03`
 
 返回：`report_date/run_id/data_quality/market_switch/account/holdings/candidates/order_plans/risk_state/actual_execution_input/notice`。候选字段必须含条件、分数和风险标签；`notice` 固定包含“不构成投资建议、不承诺收益、不自动下单”。
+
+### API-ADMIN-003/004 队列化供应商导入
+
+请求分别为 `POST /api/v1/admin/data-imports/ifind/{business_date}?scope=pilot|full` 和
+`POST /api/v1/admin/data-imports/tushare/{business_date}?scope=pilot|full`，必须使用
+`ADMIN` Bearer Token 和 `Idempotency-Key`。返回 `202 Accepted`，包含 `job_id`、稳定的
+`task_key`、业务日期和 scope；Token 只由 worker 从环境配置读取，不出现在请求体、URL 或
+审计摘要。Tushare `full` 还要求 `TUSHARE_FULL_ENABLED=true`，pilot 未完成人工验收时必须
+保持关闭。供应商禁用或队列不可用返回 `DEPENDENCY_UNAVAILABLE`。
 
 ## 5. 过滤、排序与分页
 

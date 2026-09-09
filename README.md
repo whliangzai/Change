@@ -2,11 +2,14 @@
 
 This worktree provides the safe asynchronous boundary for the research and manual-confirmation system. It does not contain broker connectivity and cannot submit, cancel, repair, or automatically recover orders, move funds, or place trades.
 
-## Current scope (2026-09-05)
+## Current scope (2026-09-09)
 
-The current phase is limited to local research validation with SQLite and the repository-owned
-fixture. Docker, PostgreSQL 16, Redis/RQ, deployed workers, and production recovery exercises
-remain documented future work; they are not acceptance criteria or blockers for this local phase.
+The current phase is still local research validation with SQLite and repository-owned fixtures.
+The worktree now also contains recorded/fixture-tested iFinD and Tushare HTTP ingestion paths:
+Tushare is the current primary HTTP source, iFinD remains a compatibility path, and AKShare is
+validation-only evidence. Real
+provider credentials, external PostgreSQL/Redis, deployed workers, full-history backfill and
+production recovery exercises remain unverified; they are not replaced by local fixtures.
 
 ## Local run
 
@@ -62,14 +65,22 @@ python scripts/run_backtest.py --business-date <YYYY-MM-DD>
 ```
 
 Use `python scripts/run_backtest.py --dry-run` to validate the configured backtest without
-creating a run. Authorized CSV/Parquet import is explicit; no vendor feed is fetched by the
-application. The local SQLite workflow is for development verification only. Production still
-requires PostgreSQL 16, Redis/RQ, deployed workers, and genuinely authorized market data;
-those external dependencies are not replaced by this fixture.
+creating a run. Authorized CSV/Parquet import remains supported; provider imports are only
+started through the protected ADMIN queue endpoints documented in `docs/runbooks/operations.md`.
+Never put a provider token in a task payload or URL. Tushare `full` import stays disabled until
+pilot evidence is reviewed and `TUSHARE_FULL_ENABLED=true` is explicitly enabled. The local
+SQLite workflow is for development verification only. Production still requires PostgreSQL 16,
+Redis/RQ, deployed workers, and genuinely authorized market data.
 
 ## Jobs and idempotency
 
-Calendar, data import, quality, daily report, backtest, and backup tasks receive application/domain services by dependency injection. A key is deterministic (`kind:business-date[:scope]`); completed keys replay the recorded value, while failures remain in `job_run` history and may be retried only when the exception is a dependency failure. Data and rule errors are surfaced without automatic retry. Audit events are append-only and contain summaries, never credentials.
+Calendar, file/provider data import, quality, daily report, backtest, and backup tasks receive
+application/domain services by dependency injection. A key is deterministic
+(`kind:business-date[:scope]`); provider imports use `data-import:<date>:ifind-<scope>` or
+`data-import:<date>:tushare-<scope>`. Completed keys replay the recorded value, while failures
+remain in `job_run` history and may be retried only when the exception is a dependency failure.
+Data and rule errors are surfaced without automatic retry. Audit events are append-only and
+contain summaries, never credentials.
 
 ## Storage and backup
 
@@ -77,7 +88,17 @@ Calendar, data import, quality, daily report, backtest, and backup tasks receive
 
 ## Compose deployment
 
-`docker compose config` validates the file in a current Docker installation. The stack contains app, worker, PostgreSQL 16, and Redis 7. App ports bind to loopback only; no broker network service is present. Set `APP_ENV=development`, `test`, or `simulation` to select separate named data, backup, database, and Redis volumes. Run migrations before publishing, deploy the image, and check app/postgres/redis health. Rollback means stop the new image, restore the previous image tag, and keep the immutable data volumes; never rewrite historical runs. The current environment only exposes the legacy `docker-compose` command, whose static configuration check passes with required temporary values; the requested `docker compose` subcommand is unavailable and the daemon cannot connect, so container startup and PostgreSQL 16/Redis 7/RQ verification remain blocked.
+`docker compose config` validates the file in a current Docker installation. The stack contains
+app, worker, PostgreSQL 16, and Redis 7; the image includes the HTTP client and AKShare
+validation dependencies used by provider workers. App ports bind to loopback only; no broker
+network service is present. Set `APP_ENV=development`, `test`, or `simulation` to select separate
+named data, backup, database, and Redis volumes. Run migrations before publishing, deploy the
+image, and check app/postgres/redis health. Rollback means stop the new image, restore the
+previous image tag, and keep the immutable data volumes; never rewrite historical runs. The
+current environment only exposes the legacy `docker-compose` command, whose static
+configuration check passes with required temporary values; the requested `docker compose`
+subcommand is unavailable and the daemon cannot connect, so container startup and PostgreSQL
+16/Redis 7/RQ verification remain blocked.
 
 ## Recovery and retention
 
@@ -85,11 +106,11 @@ Target RPO is ≤1 hour through hourly database/artifact backups; target RTO is 
 
 P0 is data loss, credential exposure, or an unsafe execution boundary: stop affected services, preserve logs, revoke exposed credentials, and escalate immediately. P1 is a failed daily report, quality gate, or backup: pause publication/manual confirmation, inspect the run and dependency health, then retry the same key after recovery. P2 is a non-blocking report or UI defect: record it, preserve the run, and schedule a normal fix. No incident procedure automatically trades or restores a risk state.
 
-## Verification snapshot (2026-09-04)
+## Verification snapshot (2026-09-09)
 
-The full local suite passes when pytest uses a workspace-owned base directory: `146 passed, 40 warnings` with `F:\PROJECT\Money\.venv\Scripts\python.exe -m pytest -q --basetemp .pytest-tmp-final`. The plain command first hit a Windows ACL error while scanning the system pytest temp directory (`114 passed, 31 errors`); this is an environment issue, not a test assertion failure.
+The full local suite passes when pytest uses a workspace-owned base directory: `230 passed, 64 warnings`. The plain command may hit a Windows ACL error while scanning the system pytest temp directory; that is an environment issue, not a test assertion failure.
 
-Ruff lint and strict mypy pass (`69` app files). Ruff format also passes: `121 files already formatted` after formatting the previously reported 19 files. The persistence-runtime review suite reports `20 passed`. Alembic `upgrade head` and `check` pass on a fresh isolated SQLite verification database through revisions `0001`–`0003`; the existing `data.db` is behind head and was not changed. Static Compose configuration passes with required temporary values through legacy `docker-compose`; the requested `docker compose` subcommand is unavailable and Docker Desktop's daemon is unavailable, so container deployment and PostgreSQL 16/Redis 7/RQ integration remain unverified. The current `.env` has Redis settings but no `DATABASE_URL`; no broker connectivity or order-submit path exists.
+Ruff lint and strict mypy pass (`82` app files). Ruff format check currently reports 12 existing/provider-integration files that need formatting; no bulk formatting was applied to the dirty worktree. The persistence-runtime review suite is included in the full test run. Alembic `upgrade head` and `check` pass on a fresh isolated SQLite verification database through revisions `0001`–`0003`; the current provider increment stores provenance in existing batch metadata and does not yet add a provider-specific migration. Static Compose configuration passes with required temporary values through legacy `docker-compose`; the requested `docker compose` subcommand is unavailable and Docker Desktop's daemon is unavailable, so container deployment and PostgreSQL 16/Redis 7/RQ integration remain unverified. The current `.env` has Redis settings but no `DATABASE_URL`; no broker connectivity or order-submit path exists.
 
 The loopback smoke returned `/health` HTTP 200 and `AUTH_REQUIRED` HTTP 401 for unauthenticated data, backtest, and daily-report requests. Readiness timed out when Redis was unavailable, so readiness and container health remain blocked. The only production-tree placeholder hit is the unused `app/api/audit.py`; the mounted audit API is `app/api/v1/admin.py`. `FakeRedis` and `FakeQueue` are test doubles only.
 

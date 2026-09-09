@@ -231,7 +231,10 @@ def create_app(
                         b"\0".join(
                             [
                                 request.method.encode(),
-                                request.url.path.encode(),
+                                (
+                                    request.url.path
+                                    + (f"?{request.url.query}" if request.url.query else "")
+                                ).encode(),
                                 body,
                                 actor_id.encode(),
                             ]

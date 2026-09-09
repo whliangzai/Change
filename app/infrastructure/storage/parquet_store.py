@@ -65,14 +65,20 @@ class ParquetStore:
     ) -> ArtifactManifest:
         if layer not in self._layers:
             raise ValueError(f"layer must be one of {sorted(self._layers)}")
-        if not dataset or Path(dataset).name != dataset:
-            raise ValueError("dataset must be a simple name")
+        dataset_path = Path(dataset)
+        if (
+            not dataset
+            or dataset_path.is_absolute()
+            or len(dataset_path.parts) not in {1, 2}
+            or any(part in {"", ".", ".."} for part in dataset_path.parts)
+        ):
+            raise ValueError("dataset must be a safe one- or two-part relative name")
         content, file_format = self._encode(records)
         digest = hashlib.sha256(content).hexdigest()
         artifact_version = version or f"v-{digest[:16]}"
         directory = self.root / layer / dataset / artifact_version
         directory.mkdir(parents=True, exist_ok=False)
-        path = directory / f"{dataset}.parquet"
+        path = directory / f"{dataset_path.name}.parquet"
         path.write_bytes(content)
         manifest_path = directory / "manifest.json"
         manifest = ArtifactManifest(

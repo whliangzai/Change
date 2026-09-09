@@ -328,6 +328,378 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                     )
             return self._batch_record(batch, source.name, payload)
 
+    def import_provider_batch(
+        self,
+        owner_id: UUID,
+        payload: dict[str, Any],
+        rows: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    ) -> dict[str, Any]:
+        """Publish a provider batch with historical dimensions and provenance.
+
+        Unlike the legacy file importer this path never invents listing dates or a
+        board. Incomplete provider evidence is retained as an UNAVAILABLE batch.
+        """
+        normalized = [self._normalize_daily_bar_row(row) for row in rows]
+        as_of_date = self._as_date(payload.get("date_to")) or date.today()
+        available_at = self._timestamp(payload.get("available_at")) or datetime.now(UTC)
+        cutoff = self._timestamp(payload.get("information_cutoff_at")) or available_at
+        content_hash = str(payload.get("content_hash") or canonical_content_hash(normalized))
+        quality_errors = list(payload.get("quality_errors") or [])
+        try:
+            QualityGate().validate_daily_bars(normalized)
+            QualityGate().validate_batch_provenance(
+                as_of_date=as_of_date, available_at=available_at, information_cutoff_at=cutoff
+            )
+        except DataQualityError as exc:
+            quality_errors.extend(
+                {
+                    "symbol": issue.symbol,
+                    "trade_date": issue.trade_date.isoformat() if issue.trade_date else None,
+                    "field": issue.field,
+                    "message": issue.message,
+                }
+                for issue in exc.issues
+            )
+        metadata = payload.get("provider_metadata") or payload.get("ifind_metadata") or {}
+        source_name = str(payload.get("source_name") or "ifind_http")
+        provider_name = source_name.split("_", 1)[0]
+        quality_warnings = list(payload.get("quality_warnings") or [])
+        with self._session() as session:
+            source = session.scalar(
+                select(models.DataSource).where(models.DataSource.name == source_name)
+            )
+            if source is None:
+                source = models.DataSource(name=source_name, kind="HTTP", enabled=True)
+                session.add(source)
+                session.flush()
+            version = str(payload.get("version") or f"{provider_name}-{content_hash[:16]}")
+            existing = session.scalar(
+                select(models.DataBatch).where(
+                    models.DataBatch.source_id == source.id,
+                    models.DataBatch.dataset_type == "DAILY_BAR",
+                    models.DataBatch.as_of_date == as_of_date,
+                    models.DataBatch.version == version,
+                )
+            )
+            if existing is not None:
+                return {**self._batch_record(existing, source.name, payload), "replayed": True}
+            batch = models.DataBatch(
+                id=uuid4(),
+                source_id=source.id,
+                owner_id=str(owner_id),
+                dataset_type="DAILY_BAR",
+                as_of_date=as_of_date,
+                available_at=available_at,
+                information_cutoff_at=cutoff,
+                version=version,
+                status="UNAVAILABLE"
+                if quality_errors
+                else "WARNING_AVAILABLE"
+                if quality_warnings
+                else "AVAILABLE",
+                quality_summary={
+                    "blocking": bool(quality_errors),
+                    "record_count": 0 if quality_errors else len(normalized),
+                    "issues": quality_errors,
+                    "warnings": quality_warnings,
+                    "provenance": payload.get("provenance", {}),
+                    "actual_pulled_at": payload.get("actual_pulled_at"),
+                    "mapping_version": payload.get("mapping_version"),
+                },
+                content_hash=content_hash,
+                file_hash=payload.get("file_hash"),
+                start_date=as_of_date,
+                end_date=as_of_date,
+                record_count=0 if quality_errors else len(normalized),
+                file_location=payload.get("file_location"),
+                license_note=str(payload.get("license_note") or f"{provider_name} HTTP API"),
+            )
+            session.add(batch)
+            session.flush()
+            if quality_errors:
+                return self._batch_record(batch, source.name, payload)
+            master_by_code = {
+                self._ifind_code(row): row
+                for row in metadata.get("security_master", [])
+                if self._ifind_code(row)
+            }
+            metadata_errors = []
+            for normalized_row in normalized:
+                metadata_row = master_by_code.get(str(normalized_row["symbol"]), {})
+                if (
+                    self._as_date(
+                        self._ifind_pick(metadata_row, "listed_at", "listedDate", "list_date")
+                    )
+                    is None
+                ):
+                    metadata_errors.append(
+                        {
+                            "symbol": str(normalized_row["symbol"]),
+                            "field": "listed_at",
+                            "message": f"{provider_name} listing date is required",
+                        }
+                    )
+                if not self._ifind_pick(metadata_row, "board", "market"):
+                    metadata_errors.append(
+                        {
+                            "symbol": str(normalized_row["symbol"]),
+                            "field": "board",
+                            "message": f"{provider_name} board is required",
+                        }
+                    )
+            if metadata_errors:
+                batch.status = "UNAVAILABLE"
+                batch.record_count = 0
+                batch.quality_summary = {
+                    **(batch.quality_summary or {}),
+                    "blocking": True,
+                    "issues": metadata_errors,
+                }
+                return self._batch_record(batch, source.name, payload)
+            for calendar_row in metadata.get("calendar", []):
+                calendar_date = self._as_date(
+                    self._ifind_pick(
+                        calendar_row, "trade_date", "business_date", "tradeDate", "cal_date"
+                    )
+                )
+                if calendar_date is None:
+                    continue
+                exchange = str(self._ifind_pick(calendar_row, "exchange", "market") or "SSE")
+                existing_calendar = session.get(models.TradeCalendar, (exchange, calendar_date))
+                if existing_calendar is None:
+                    session.add(
+                        models.TradeCalendar(
+                            exchange=exchange,
+                            trade_date=calendar_date,
+                            is_open=bool(self._ifind_pick(calendar_row, "is_open", "isOpen")),
+                        )
+                    )
+                else:
+                    existing_calendar.is_open = bool(
+                        self._ifind_pick(calendar_row, "is_open", "isOpen")
+                    )
+            industry_rows = metadata.get("industries", [])
+            for row in normalized:
+                symbol = str(row["symbol"])
+                security = session.scalar(
+                    select(models.Security).where(
+                        models.Security.exchange == self._exchange(symbol),
+                        models.Security.symbol == symbol,
+                    )
+                )
+                master = master_by_code.get(symbol, {})
+                if security is None:
+                    listed = self._as_date(
+                        master.get("listed_at")
+                        or master.get("listedDate")
+                        or master.get("list_date")
+                    )
+                    if listed is None:
+                        quality_errors.append(
+                            {
+                                "symbol": symbol,
+                                "field": "listed_at",
+                                "message": f"{provider_name} listing date is required",
+                            }
+                        )
+                        continue
+                    security = models.Security(
+                        id=uuid4(),
+                        symbol=symbol,
+                        exchange=self._exchange(symbol),
+                        security_type="INDEX" if symbol in {"000300.SH", "000001.SH"} else "COMMON",
+                        list_date=listed,
+                        delist_date=self._as_date(
+                            master.get("delisted_at")
+                            or master.get("delistedDate")
+                            or master.get("delist_date")
+                        ),
+                    )
+                    session.add(security)
+                    session.flush()
+                elif master:
+                    security.list_date = (
+                        self._as_date(
+                            master.get("listed_at")
+                            or master.get("listedDate")
+                            or master.get("list_date")
+                        )
+                        or security.list_date
+                    )
+                    security.delist_date = self._as_date(
+                        master.get("delisted_at")
+                        or master.get("delistedDate")
+                        or master.get("delist_date")
+                    )
+                session.add(
+                    models.DailyBar(
+                        security_id=security.id,
+                        trade_date=row["trade_date"],
+                        raw_open=row["raw_open"],
+                        raw_high=row["raw_high"],
+                        raw_low=row["raw_low"],
+                        raw_close=row["raw_close"],
+                        adjusted_open=row["adjusted_open"],
+                        adjusted_high=row["adjusted_high"],
+                        adjusted_low=row["adjusted_low"],
+                        adjusted_close=row["adjusted_close"],
+                        volume=row["volume"],
+                        amount=row["amount"],
+                        adjust_factor=row["adjust_factor"],
+                        available_at=row["available_at"],
+                        data_batch_id=batch.id,
+                    )
+                )
+                session.add(
+                    models.AdjustmentFactor(
+                        security_id=security.id,
+                        effective_date=row["trade_date"],
+                        factor=row["adjust_factor"],
+                        factor_type="DEFAULT",
+                        data_batch_id=batch.id,
+                    )
+                )
+                session.add(
+                    models.SecurityStatusHistory(
+                        security_id=security.id,
+                        effective_date=row["trade_date"],
+                        is_st=bool(row["is_st"]),
+                        is_suspended=bool(row["is_suspended"]),
+                        is_delist_period=bool(row["is_delist_period"]),
+                        board=self._normalized_board(
+                            self._ifind_pick(master, "board", "market")
+                        ),
+                        source_batch_id=batch.id,
+                    )
+                )
+                for industry in (
+                    item for item in industry_rows if self._ifind_code(item) == symbol
+                ):
+                    industry_code = self._ifind_pick(
+                        industry, "industry_code", "industryCode", "index_code", "l3_code"
+                    )
+                    if industry_code:
+                        effective_from = self._as_date(
+                            self._ifind_pick(industry, "valid_from", "inDate", "in_date")
+                        ) or row["trade_date"]
+                        existing_membership = session.get(
+                            models.IndustryMembershipHistory,
+                            (security.id, str(industry_code), effective_from),
+                        )
+                        if existing_membership is None:
+                            session.add(
+                                models.IndustryMembershipHistory(
+                                    security_id=security.id,
+                                    industry_code=str(industry_code),
+                                    effective_from=effective_from,
+                                    effective_to=self._as_date(
+                                        self._ifind_pick(
+                                            industry, "valid_to", "outDate", "out_date"
+                                        )
+                                    ),
+                                    source_batch_id=batch.id,
+                                )
+                            )
+                        else:
+                            existing_membership.effective_to = self._as_date(
+                                self._ifind_pick(industry, "valid_to", "outDate", "out_date")
+                            )
+            normalized_symbols = {str(row["symbol"]) for row in normalized}
+            for status_row in metadata.get("statuses", []):
+                symbol = self._ifind_code(status_row)
+                if not symbol or symbol in normalized_symbols:
+                    continue
+                effective_date = self._as_date(
+                    self._ifind_pick(status_row, "effective_date", "trade_date", "tradeDate")
+                )
+                master = master_by_code.get(symbol, {})
+                if effective_date is None:
+                    quality_errors.append(
+                        {
+                            "symbol": symbol,
+                            "field": "effective_date",
+                            "message": f"{provider_name} status effective date is required",
+                        }
+                    )
+                    continue
+                security = session.scalar(
+                    select(models.Security).where(
+                        models.Security.exchange == self._exchange(symbol),
+                        models.Security.symbol == symbol,
+                    )
+                )
+                listed_at = self._as_date(
+                    self._ifind_pick(master, "listed_at", "listedDate", "list_date")
+                )
+                if security is None:
+                    if listed_at is None:
+                        quality_errors.append(
+                            {
+                                "symbol": symbol,
+                                "field": "listed_at",
+                                "message": f"{provider_name} listing date is required",
+                            }
+                        )
+                        continue
+                    security = models.Security(
+                        id=uuid4(),
+                        symbol=symbol,
+                        exchange=self._exchange(symbol),
+                        security_type="COMMON",
+                        list_date=listed_at,
+                        delist_date=self._as_date(
+                            self._ifind_pick(master, "delisted_at", "delistedDate", "delist_date")
+                        ),
+                    )
+                    session.add(security)
+                    session.flush()
+                elif listed_at is not None:
+                    security.list_date = listed_at
+                    security.delist_date = self._as_date(
+                        self._ifind_pick(master, "delisted_at", "delistedDate", "delist_date")
+                    )
+                existing_status = session.get(
+                    models.SecurityStatusHistory, (security.id, effective_date)
+                )
+                if existing_status is None:
+                    session.add(
+                        models.SecurityStatusHistory(
+                            security_id=security.id,
+                            effective_date=effective_date,
+                            is_st=bool(self._ifind_pick(status_row, "is_st", "st_flag")),
+                            is_suspended=bool(
+                                self._ifind_pick(status_row, "is_suspended", "suspended")
+                            ),
+                            is_delist_period=bool(
+                                self._ifind_pick(
+                                    status_row, "is_delist_period", "delisting_arrangement"
+                                )
+                            ),
+                            board=self._normalized_board(
+                                self._ifind_pick(master, "board", "market")
+                            ),
+                            source_batch_id=batch.id,
+                        )
+                    )
+            if quality_errors:
+                batch.status = "UNAVAILABLE"
+                batch.quality_summary = {
+                    **(batch.quality_summary or {}),
+                    "blocking": True,
+                    "issues": quality_errors,
+                }
+                batch.record_count = 0
+            return self._batch_record(batch, source.name, payload)
+
+    def import_ifind_batch(
+        self,
+        owner_id: UUID,
+        payload: dict[str, Any],
+        rows: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    ) -> dict[str, Any]:
+        """Compatibility shim for already-deployed iFinD imports."""
+        return self.import_provider_batch(owner_id, payload, rows)
+
     def list_batches(
         self, owner_id: UUID, status: str | None, page: int, page_size: int
     ) -> dict[str, Any]:
@@ -2293,6 +2665,37 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
     def _exchange(symbol: str) -> str:
         suffix = symbol.rsplit(".", 1)[-1].upper()
         return {"SH": "SSE", "SZ": "SZSE"}.get(suffix, suffix or "UNKNOWN")
+
+    @staticmethod
+    def _ifind_pick(row: dict[str, Any], *names: str) -> Any:
+        for name in names:
+            if row.get(name) not in (None, ""):
+                return row[name]
+        return None
+
+    @staticmethod
+    def _normalized_board(value: object) -> str:
+        """Translate provider-facing market labels into the strategy board enum."""
+        board = str(value or "").strip().upper()
+        return {
+            "MAIN": "MAIN",
+            "MAIN BOARD": "MAIN",
+            "MAINBOARD": "MAIN",
+            "主板": "MAIN",
+            "中小板": "MAIN",
+            "GEM": "GEM",
+            "创业板": "GEM",
+            "STAR": "STAR",
+            "科创板": "STAR",
+            "BSE": "BSE",
+            "北交所": "BSE",
+        }.get(board, board or "UNKNOWN")
+
+    @classmethod
+    def _ifind_code(cls, row: dict[str, Any]) -> str:
+        return str(
+            cls._ifind_pick(row, "ts_code", "security_code", "thscode", "symbol", "con_code") or ""
+        )
 
     @staticmethod
     def _strategy_record(strategy: models.StrategyVersion) -> dict[str, Any]:

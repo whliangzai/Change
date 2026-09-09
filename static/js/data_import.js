@@ -49,7 +49,12 @@
     });
   };
   const renderIssues = (summary) => {
-    const issues = summary && (summary.errors || summary.issues || summary.failures || summary.warnings);
+    const issues = summary && [
+      ...(Array.isArray(summary.errors) ? summary.errors : []),
+      ...(Array.isArray(summary.issues) ? summary.issues : []),
+      ...(Array.isArray(summary.failures) ? summary.failures : []),
+      ...(Array.isArray(summary.warnings) ? summary.warnings : []),
+    ];
     $('#data-import-issues').innerHTML = (Array.isArray(issues) && issues.length ? issues : ['未发现质量错误或警告。']).map((issue) => `<li>${esc(typeof issue === 'string' ? issue : `${issue.code || '质量规则'}：${issue.message || issue.detail || JSON.stringify(issue)}`)}</li>`).join('');
   };
   const render = (record, requestId, blocked) => {

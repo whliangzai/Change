@@ -1,0 +1,12 @@
+{
+  "mapping_version": "v1",
+  "source": "sanitized-test-account-recording",
+  "datasets": {
+    "daily_bars": ["tradeDate", "thscode", "open", "high", "low", "close", "volume", "amount"],
+    "adjustment_factors": ["tradeDate", "thscode", "af"],
+    "trading_calendar": ["tradeDate", "isOpen"],
+    "security_master": ["thscode", "securityName", "listedDate", "delistedDate", "board"],
+    "historical_status": ["tradeDate", "thscode", "isST", "isSuspended", "isDelistingArrange"],
+    "industry_membership": ["thscode", "industryCode", "inDate", "outDate"]
+  }
+}
