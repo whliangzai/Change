@@ -1,21 +1,22 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="page data-quality-page" data-page="data-quality" data-api-url="{{ quality_api_url }}">
+<section class="page research-page data-quality-page" data-page="data-quality" data-api-url="{{ quality_api_url }}">
   <div class="page-heading">
     <div>
       <h1>数据质量</h1>
       <p>查看授权行情数据批次及质量闸门结果。质量不可用时，数据不会进入研究流程。</p>
     </div>
-    <a class="api-reference" data-api-url="{{ quality_api_url }}" href="{{ quality_api_url }}">接口</a>
+    <details class="developer-evidence"><summary>证据 / 开发者入口</summary><a class="api-reference" data-api-url="{{ quality_api_url }}" href="{{ quality_api_url }}"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M20 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1h5"/></svg>数据接口</a></details>
   </div>
 
   <section class="panel" aria-labelledby="batch-filters-title">
     <div class="detail-heading">
-      <div>
-        <h2 id="batch-filters-title">批次筛选</h2>
+      <div class="section-title">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5h16l-6.2 7.1V19l-3.6-2v-4.9z"/></svg>
+        <div><h2 id="batch-filters-title">数据批次</h2>
         <p class="muted">质量闸门仅反映已导入的授权数据校验结果，不代表行情可用于委托。</p>
+        </div>
       </div>
-      <p id="batch-result-count" class="muted" aria-live="polite">正在准备批次筛选…</p>
     </div>
     <form id="batch-filters" class="filters" autocomplete="off">
       <label>质量状态
@@ -27,19 +28,20 @@
           <option value="UNAVAILABLE">不可用</option>
         </select>
       </label>
-      <label>每页条数
+      <label>每页
         <select name="page_size" id="batch-page-size">
           <option value="20">20</option>
           <option value="50" selected>50</option>
           <option value="100">100</option>
         </select>
       </label>
-      <button type="submit">应用筛选</button>
+      <button class="primary" type="submit">应用筛选</button>
       <button id="batch-reset" type="button">重置筛选</button>
     </form>
   </section>
 
   <div id="batch-state" class="state loading" role="status" aria-live="polite" aria-atomic="true">正在加载数据批次，列表会保留在当前位置…</div>
+  <section class="panel batch-list-panel"><div class="section-title"><svg aria-hidden="true" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v7c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 12v7c0 1.7 3.1 3 7 3s7-1.3 7-3v-7"/></svg><h2>数据批次列表</h2><span id="batch-result-count" class="muted" aria-live="polite">正在准备批次筛选…</span></div>
   <div class="table-wrap" tabindex="0" aria-label="数据批次列表，可横向滚动">
     <table id="batch-table" aria-describedby="batch-result-count batch-state" aria-busy="true">
       <caption>授权行情数据批次与质量闸门</caption>
@@ -47,7 +49,8 @@
       <tbody><tr><td colspan="8">正在加载数据批次…</td></tr></tbody>
     </table>
   </div>
-  <nav id="batch-pagination" class="pagination" aria-label="数据批次分页"></nav>
+  <div class="list-footer"><nav id="batch-pagination" class="pagination" aria-label="数据批次分页"></nav></div>
+  </section>
 
   <section id="quality-detail" class="detail-panel" aria-labelledby="quality-detail-title" tabindex="-1" hidden>
     <div class="detail-heading"><h2 id="quality-detail-title">质量明细</h2><button id="quality-close" type="button">关闭明细</button></div>
@@ -55,8 +58,7 @@
     <dl id="quality-summary" class="definition-grid"></dl>
     <h3>错误与警告</h3>
     <ul id="quality-issues" class="issue-list"></ul>
-    <p class="request-id" id="quality-request-id"></p>
   </section>
 </section>
-<script src="/static/js/data_quality.js" defer></script>
+<script src="/static/js/data_quality.js?v=layout-fix-20260918-2" defer></script>
 {% endblock %}

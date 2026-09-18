@@ -7,6 +7,7 @@
   const request = async (url, options) => window.ResearchApp.readJson(await window.ResearchApp.apiFetch(url, options));
   const state = (text, type, requestId) => window.ResearchApp.renderState($('#admin-state'), type || '', text, requestId);
   const message = (error) => window.ResearchApp.errorMessage(error.status, error.payload);
+  const statusLabel = (value, domain) => window.ResearchApp.statusLabel ? window.ResearchApp.statusLabel(value, domain) : String(value ?? '--');
   let jobsPage = 1; let auditPage = 1; let selectedJob = null; let retryKey = null; let isRetrying = false;
 
   function renderFailure(prefix, error, retry) {
@@ -22,11 +23,12 @@
     [['上一页', page - 1], ['下一页', page + 1]].forEach(([text, next]) => { const button = document.createElement('button'); button.type = 'button'; button.textContent = text; button.disabled = next < 1 || next > totalPages; button.addEventListener('click', () => load(next)); element.append(button); });
   }
 
+  function jobUrl(job) { return job.job_id || job.id; }
   function resetRetry() { selectedJob = null; retryKey = null; isRetrying = false; $('#retry-confirmation').hidden = true; $('#retry-form-error').hidden = true; $('#retry-note').value = ''; }
 
   function selectRetry(job) {
     selectedJob = job; retryKey = window.ResearchApp.idempotency();
-    $('#retry-target').textContent = `目标对象：${job.job_id || job.id}；类型：${job.job_type || job.type || '--'}；当前状态：${job.status || '--'}；失败原因：${job.error || job.failure_reason || '--'}。`;
+    $('#retry-target').textContent = `目标任务：${jobUrl(job) || '--'}；task key：${job.task_key || '--'}；供应商：${job.provider || '--'}；范围：${job.scope || '--'}；状态：${statusLabel(job.status, 'job')}；失败原因：${job.error_summary || job.error || '未提供'}。`;
     $('#retry-confirmation').hidden = false; $('#retry-confirm').disabled = false; $('#retry-confirm').textContent = $('#retry-confirm').dataset.submitLabel;
     $('#retry-confirm').focus();
   }
@@ -36,8 +38,8 @@
     isRetrying = true; const button = $('#retry-confirm'); button.disabled = true; button.textContent = '正在请求重试…';
     state('正在向服务端请求重试任务；服务端将保留审计和幂等处理。', 'loading');
     try {
-      const payload = await request(`/api/v1/jobs/${encodeURIComponent(selectedJob.job_id || selectedJob.id)}/retry`, { method: 'POST', headers: { 'Idempotency-Key': retryKey } });
-      state(`任务 ${payload.data?.job_id || selectedJob.job_id || selectedJob.id} 已由服务端受理，当前状态 ${payload.data?.status || '待刷新'}。`, 'success', payload.request_id);
+      const payload = await request(`/api/v1/jobs/${encodeURIComponent(jobUrl(selectedJob))}/retry`, { method: 'POST', headers: { 'Idempotency-Key': retryKey } });
+      state(`任务 ${payload.data?.job_id || jobUrl(selectedJob)} 已由服务端受理，当前状态 ${statusLabel(payload.data?.status || 'QUEUED', 'job')}。`, 'success', payload.request_id);
       resetRetry(); await loadJobs(jobsPage); await loadAudit(auditPage);
     } catch (error) {
       const formError = $('#retry-form-error'); formError.textContent = message(error); formError.hidden = false;
@@ -45,18 +47,27 @@
     }
   }
 
+  function filters() {
+    const params = new URLSearchParams({ page: String(jobsPage), page_size: '50' });
+    const provider = $('#jobs-provider').value; const statusValue = $('#jobs-status').value; const businessDate = $('#jobs-business-date').value;
+    if (provider) params.set('provider', provider); if (statusValue) params.set('status', statusValue); if (businessDate) params.set('business_date', businessDate);
+    return params.toString();
+  }
+
   async function loadJobs(page) {
     jobsPage = page || 1;
     try {
-      const payload = await request(`/api/v1/jobs?page=${jobsPage}&page_size=50`); const data = payload.data || {}; const items = data.items || []; const body = $('#jobs-table tbody'); body.replaceChildren();
+      const payload = await request(`/api/v1/jobs?${filters()}`); const data = payload.data || {}; const items = data.items || []; const body = $('#jobs-table tbody'); body.replaceChildren();
       items.forEach((job) => {
-        const id = job.job_id || job.id; const row = document.createElement('tr');
-        row.innerHTML = `<td><code>${esc(id || '--')}</code></td><td>${esc(job.object_type || job.job_type || job.type || '--')}</td><td>${esc(job.status || '--')}</td><td>${esc(job.error || job.failure_reason || '--')}</td><td class="date-value">${esc(job.created_at || '--')}</td><td></td>`;
-        const button = document.createElement('button'); button.type = 'button'; button.textContent = '查看重试影响'; button.disabled = !id || !['FAILED', 'UNAVAILABLE'].includes(job.status); button.addEventListener('click', () => selectRetry(job)); row.lastElementChild.append(button); body.append(row);
+        const id = jobUrl(job); const status = String(job.status || '--').toUpperCase(); const retryable = status === 'FAILED' && Boolean(job.retryable); const requeueable = status === 'QUEUED' && Boolean(job.requeueable); const recoverable = retryable || requeueable; const row = document.createElement('tr');
+        const batch = job.batch_id ? `<a href="/data-quality?batch_id=${encodeURIComponent(job.batch_id)}">${esc(job.batch_id)}</a>` : '--';
+        row.innerHTML = `<td><code>${esc(id || '--')}</code><br><code>${esc(job.task_key || '--')}</code></td><td>${esc(job.provider || '--')} / ${esc(job.scope || '--')}</td><td class="date-value">${esc(job.business_date || '--')}</td><td>${esc(statusLabel(status, 'job'))}<br><span class="muted">${esc(job.phase || '--')}</span></td><td>${esc(job.attempt ?? '--')} / ${esc(job.run_number ?? '--')}</td><td>${batch}<br><span class="muted">${esc(statusLabel(job.quality_status, 'quality'))}</span></td><td>${esc(job.error_summary || job.error || '--')}</td><td class="date-value">${esc(job.completed_at || job.ended_at || '--')}</td><td></td>`;
+        const button = document.createElement('button'); button.type = 'button'; button.textContent = retryable ? '查看重试影响' : (requeueable ? '恢复入队' : (status === 'FAILED' ? '不可重试' : '查看')); button.disabled = !recoverable || !id; button.addEventListener('click', () => selectRetry(job)); row.lastElementChild.append(button); body.append(row);
       });
-      if (!items.length) body.innerHTML = '<tr><td colspan="6" class="muted">没有可见任务。当前角色无权限时，服务端不会返回受限任务详情。</td></tr>';
+      if (!items.length) body.innerHTML = '<tr><td colspan="9" class="muted">没有符合筛选条件的任务。当前角色无权限时，服务端不会返回受限任务详情。</td></tr>';
       $('#jobs-result-count').textContent = `任务结果：${data.total || 0} 条，当前第 ${data.page || jobsPage} 页。`; pager('#jobs-pagination', jobsPage, data, loadJobs);
       window.ResearchApp.renderState($('#admin-permission'), 'success', '服务端已返回当前会话可见的任务范围。', payload.request_id); state('任务状态已加载。', 'success', payload.request_id);
+      const target = new URLSearchParams(window.location.search).get('job_id'); const match = target && items.find((item) => jobUrl(item) === target); if (match) selectRetry(match);
     } catch (error) { $('#jobs-result-count').textContent = '任务结果暂不可用。'; renderFailure('任务查询：', error, () => loadJobs(jobsPage)); }
   }
 
@@ -64,12 +75,14 @@
     auditPage = page || 1;
     try {
       const payload = await request(`/api/v1/audit-events?page=${auditPage}&page_size=50`); const data = payload.data || {}; const items = data.items || []; const body = $('#audit-table tbody'); body.replaceChildren();
-      items.forEach((item) => { const row = document.createElement('tr'); row.innerHTML = `<td class="date-value">${esc(item.occurred_at || '--')}</td><td><code>${esc(item.actor_id || '--')}</code></td><td>${esc((item.actor_roles || []).join(', ') || '--')}</td><td>${esc(item.action || '--')}</td><td><code>${esc(`${item.object_type || '--'} ${item.object_id || '--'}`)}</code></td><td>${esc(item.result || '--')}</td><td><code>${esc(item.request_id || '--')}</code></td>`; body.append(row); });
-      if (!items.length) body.innerHTML = '<tr><td colspan="7" class="muted">没有可见审计事件。可在完成管理操作后刷新查看服务端审计结果。</td></tr>';
+      items.forEach((item) => { const row = document.createElement('tr'); row.innerHTML = `<td class="date-value">${esc(item.occurred_at || '--')}</td><td><code>${esc(item.actor_id || '--')}</code></td><td>${esc((item.actor_roles || []).join(', ') || '--')}</td><td>${esc(item.action || '--')}</td><td><code>task: ${esc(item.task_key || item.idempotency_key || '--')}<br>job: ${esc(item.job_id || item.object_id || '--')}</code></td><td>${esc(item.result || '--')}</td>`; body.append(row); });
+      if (!items.length) body.innerHTML = '<tr><td colspan="6" class="muted">没有可见审计事件。可在完成管理操作后刷新查看服务端审计结果。</td></tr>';
       $('#audit-result-count').textContent = `审计结果：${data.total || 0} 条，当前第 ${data.page || auditPage} 页。`; pager('#audit-pagination', auditPage, data, loadAudit);
     } catch (error) { $('#audit-result-count').textContent = '审计结果暂不可用。'; renderFailure('审计查询：', error, () => loadAudit(auditPage)); }
   }
 
   async function loadAll() { state('正在加载管理数据…', 'loading'); await Promise.all([loadJobs(jobsPage), loadAudit(auditPage)]); }
+  $('#jobs-filters').addEventListener('submit', (event) => { event.preventDefault(); loadJobs(1); });
+  $('#jobs-filter-reset').addEventListener('click', () => { $('#jobs-provider').value = ''; $('#jobs-status').value = ''; $('#jobs-business-date').value = ''; loadJobs(1); });
   $('#admin-refresh').addEventListener('click', loadAll); $('#retry-cancel').addEventListener('click', resetRetry); $('#retry-confirm').addEventListener('click', retrySelected); loadAll();
 }());

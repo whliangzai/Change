@@ -7,8 +7,13 @@
   const request = async (url, options) => window.ResearchApp.readJson(await window.ResearchApp.apiFetch(url, options));
   const state = (target, text, type, requestId) => window.ResearchApp.renderState($(target), type || '', text, requestId);
   const message = (error) => window.ResearchApp.errorMessage(error.status, error.payload);
+  const statusLabel = (value, domain) => window.ResearchApp.statusLabel ? window.ResearchApp.statusLabel(value, domain) : String(value ?? '--');
   let isSubmitting = false;
   let executeKey = null;
+  let executeConfirming = false;
+  let listPage = 1;
+  let listRequest = 0;
+  let currentRun = null;
 
   function requestId(error) { return error.payload?.request_id; }
 
@@ -37,12 +42,19 @@
     const runnable = ['QUEUED', 'FAILED', 'READY'].includes(run.status);
     button.hidden = !runnable;
     button.disabled = isSubmitting;
-    button.textContent = isSubmitting ? '正在请求执行…' : button.dataset.submitLabel;
+    button.textContent = isSubmitting ? '正在请求执行…' : (executeConfirming ? '返回修改' : button.dataset.submitLabel);
+  }
+
+  function showExecuteConfirmation(run) {
+    const target = $('#backtest-execute-summary'); target.replaceChildren();
+    [['对象', run.run_id || root.dataset.runId], ['状态', window.ResearchApp.statusLabel ? window.ResearchApp.statusLabel(run.status, 'job') : (run.status || '--')], ['数据批次 / 策略版本', `${run.data_batch_id || '--'} / ${run.strategy_version_id || '--'}`], ['日期区间', `${run.start_date || '--'} 至 ${run.end_date || '--'}`], ['关键影响', '服务端将执行既有研究运行并写入不可变结果证据；不会产生委托或自动交易。']].forEach(([label, value]) => { const term = document.createElement('dt'); term.textContent = label; const definition = document.createElement('dd'); definition.textContent = String(value ?? '--'); target.append(term, definition); });
+    executeConfirming = true; $('#backtest-execute-confirmation').hidden = false; $('#backtest-execute').textContent = '返回修改'; $('#backtest-execute-confirm').focus();
   }
 
   function renderRun(run) {
+    currentRun = run;
     const fields = [
-      ['运行号', run.run_id], ['运行状态', run.status], ['数据批次', run.data_batch_id],
+      ['运行号', run.run_id], ['运行状态', statusLabel(run.status, 'job')], ['数据批次', run.data_batch_id],
       ['策略版本', run.strategy_version_id], ['成本版本', run.cost_config_id], ['规则版本', run.rule_config_id],
       ['日期区间', `${run.start_date || '--'} 至 ${run.end_date || '--'}`],
       ['结果可用性', run.result_usable ? '可用' : '尚不可用'], ['结果快照', run.snapshot_hash || '--'],
@@ -51,7 +63,7 @@
     $('#run-summary').innerHTML = fields.map(([label, value]) => `<dt>${esc(label)}</dt><dd><code>${esc(value ?? '--')}</code></dd>`).join('');
     const stages = Array.isArray(run.stages) ? run.stages : [];
     $('#run-stages').innerHTML = stages.length
-      ? `<h3>阶段进度</h3><div class="table-wrap"><table><thead><tr><th>阶段</th><th>状态</th><th>进度</th><th>说明</th></tr></thead><tbody>${stages.map((stage) => `<tr><td>${esc(stage.name || stage.stage || '--')}</td><td>${esc(stage.status || '--')}</td><td class="numeric">${stage.progress == null ? '--' : `${esc(stage.progress)}%`}</td><td>${esc(stage.error || '--')}</td></tr>`).join('')}</tbody></table></div>`
+      ? `<h3>阶段进度</h3><div class="table-wrap"><table><caption>回测执行阶段与服务端状态</caption><thead><tr><th scope="col">阶段</th><th scope="col">状态</th><th scope="col">进度</th><th scope="col">说明</th></tr></thead><tbody>${stages.map((stage) => `<tr><td>${esc(stage.name || stage.stage || '--')}</td><td><span class="status">${esc(stage.status || '--')}</span></td><td class="numeric">${stage.progress == null ? '--' : `${esc(stage.progress)}%`}</td><td>${esc(stage.error || '--')}</td></tr>`).join('')}</tbody></table></div>`
       : '<p class="muted">服务端尚未提供阶段进度；请以运行状态和结果可用性为准。</p>';
     const reasons = run.unavailable_reasons || run.reason;
     if (run.result_usable) clearUnavailable('#run-unavailable');
@@ -103,38 +115,79 @@
     } catch (error) { renderFailure('#backtest-state', error, () => loadDetail(id)); }
   }
 
-  async function loadList() {
+  async function loadList(page = listPage) {
+    const requestNumber = ++listRequest;
+    const pager = $('#backtest-pagination');
+    pager.replaceChildren();
+    $('#backtest-empty-banner').hidden = true;
     state('#backtest-state', '正在加载回测列表…', 'loading');
     try {
-      const payload = await request('/api/v1/backtests?page=1&page_size=50');
+      const payload = await request(`/api/v1/backtests?page=${page}&page_size=50`);
+      if (requestNumber !== listRequest) return;
       const data = payload.data || {}; const body = $('#backtest-list tbody'); body.replaceChildren();
+      const total = Number(data.total || 0);
+      const pages = Math.max(1, Math.ceil(total / 50));
+      if (page > pages) return loadList(pages);
+      listPage = page;
+      $('#backtest-count').textContent = `共 ${total} 条`;
+      $('#backtest-table-wrap').hidden = false;
+      $('#backtest-empty-banner').hidden = total !== 0;
+      $('#backtest-empty').hidden = total !== 0;
+      if (!(data.items || []).length) {
+        const row = document.createElement('tr');
+        row.className = 'empty-table-row';
+        row.innerHTML = '<td colspan="6"><div class="table-empty"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 4h9l3 3v13H6z"/><path d="M9 10h6M9 14h6"/><circle cx="18" cy="18" r="3.5"/><path d="M18 16.5v3M16.5 18h3"/></svg><strong>暂无回测运行数据</strong><span>点击右上角“新建回测”开始创建</span></div></td>';
+        body.append(row);
+      }
       (data.items || []).forEach((run) => {
         const row = document.createElement('tr');
-        row.innerHTML = `<td><code>${esc(run.run_id)}</code></td><td>${esc(run.status || '--')}</td><td class="date-value">${esc(run.start_date || '--')} 至 ${esc(run.end_date || '--')}</td><td>${run.result_usable ? '可用' : '尚不可用'}</td><td></td>`;
+        row.innerHTML = `<td><code>${esc(run.run_id)}</code></td><td><code>${esc(run.strategy_version_id || '--')}</code></td><td>${esc(statusLabel(run.status, 'job'))}</td><td class="date-value">${esc(run.start_date || '--')} 至 ${esc(run.end_date || '--')}</td><td>${run.result_usable ? '可用' : '尚不可用'}</td><td></td>`;
         const button = document.createElement('button'); button.type = 'button'; button.textContent = '查看运行';
         button.addEventListener('click', () => { location.href = `/backtests/${encodeURIComponent(run.run_id)}/view`; });
         row.lastElementChild.append(button); body.append(row);
       });
-      state('#backtest-state', data.items?.length ? `已加载 ${data.items.length} 条运行。` : '暂无回测运行。请先创建满足前置条件的研究回测。', data.items?.length ? 'success' : 'unavailable', payload.request_id);
-    } catch (error) { renderFailure('#backtest-state', error, loadList); }
+      $('#backtest-state').hidden = true;
+      const summary = document.createElement('span');
+      const start = total ? ((page - 1) * 50) + 1 : 0;
+      const end = total ? Math.min(page * 50, total) : 0;
+      summary.textContent = `${start} – ${end} / ${total}`;
+      pager.append(summary);
+      const prev = document.createElement('button');
+      prev.type = 'button'; prev.className = 'pagination-button pagination-prev'; prev.setAttribute('aria-label', '上一页'); prev.textContent = '‹';
+      prev.disabled = page <= 1; prev.addEventListener('click', () => loadList(page - 1)); pager.append(prev);
+      const current = document.createElement('span'); current.className = 'pagination-current'; current.textContent = String(page); pager.append(current);
+      const next = document.createElement('button');
+      next.type = 'button'; next.className = 'pagination-button pagination-next'; next.setAttribute('aria-label', '下一页'); next.textContent = '›';
+      next.disabled = page >= pages; next.addEventListener('click', () => loadList(page + 1)); pager.append(next);
+    } catch (error) {
+      if (requestNumber !== listRequest) return;
+      $('#backtest-table-wrap').hidden = false;
+      $('#backtest-empty-banner').hidden = true;
+      $('#backtest-count').textContent = '加载失败';
+      renderFailure('#backtest-state', error, () => loadList(page));
+    }
   }
 
-  async function execute() {
+  async function submitExecution() {
     const id = root.dataset.runId;
     if (!id || isSubmitting) return;
-    isSubmitting = true; executeKey = executeKey || window.ResearchApp.idempotency(); setExecute({ status: 'READY' });
+    isSubmitting = true; executeKey = executeKey || window.ResearchApp.idempotency(); $('#backtest-execute-confirm').disabled = true; setExecute({ status: 'READY' });
     state('#backtest-state', '正在请求服务端执行回测；结果是否可用以服务端运行状态为准。', 'loading');
     try {
       const payload = await request(`/api/v1/backtests/${encodeURIComponent(id)}/execute`, { method: 'POST', headers: { 'Idempotency-Key': executeKey } });
-      state('#backtest-state', `服务端已受理回测执行：${payload.data?.status || '状态待刷新'}。`, 'success', payload.request_id);
-      executeKey = null; isSubmitting = false; await loadDetail(id);
+      state('#backtest-state', `服务端已受理回测执行：${window.ResearchApp.statusLabel ? window.ResearchApp.statusLabel(payload.data?.status, 'job') : (payload.data?.status || '状态待刷新')}。`, 'success', payload.request_id);
+      executeKey = null; isSubmitting = false; executeConfirming = false; $('#backtest-execute-confirmation').hidden = true; await loadDetail(id);
     } catch (error) {
-      renderFailure('#backtest-state', error, execute);
-      isSubmitting = false; setExecute({ status: 'READY' });
+      renderFailure('#backtest-state', error, () => { executeConfirming = false; showExecuteConfirmation(currentRun || { run_id: root.dataset.runId, status: 'READY' }); });
+      isSubmitting = false; $('#backtest-execute-confirm').disabled = false; setExecute({ status: 'READY' });
     }
   }
 
   $('#backtest-refresh').addEventListener('click', () => root.dataset.runId ? loadDetail(root.dataset.runId) : loadList());
-  $('#backtest-execute').addEventListener('click', execute);
+  $('#backtest-execute').addEventListener('click', () => {
+    if (executeConfirming) { executeConfirming = false; $('#backtest-execute-confirmation').hidden = true; setExecute({ status: 'READY' }); $('#backtest-execute').focus(); return; }
+    showExecuteConfirmation(currentRun || { run_id: root.dataset.runId, status: 'READY' });
+  });
+  $('#backtest-execute-confirm').addEventListener('click', submitExecution);
   root.dataset.runId ? loadDetail(root.dataset.runId) : loadList();
 }());

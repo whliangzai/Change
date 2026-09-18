@@ -1,12 +1,19 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="page-shell" data-page="reports" data-api-url="/api/v1/backtests">
-  <div class="page-heading"><div><h1>报告与偏差</h1><p class="muted">报告以服务端保存的回测结果为准；模拟成本与模拟价格均不是委托依据。</p></div><button id="reports-refresh" type="button">刷新运行</button></div>
+<section class="research-page page-shell" data-page="reports" data-api-url="/api/v1/backtests">
+  <div class="page-heading"><div><h1>报告与偏差</h1><p class="muted">报告以服务端保存的回测结果为准；模拟成本与模拟价格均不是委托依据。</p></div><button class="header-action" id="reports-refresh" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0 1 4M20 4v7h-7"/></svg>刷新运行</button></div>
   <div id="reports-state" class="state loading" role="status">正在加载回测运行…</div>
-  <section class="panel"><div class="filters"><label>选择回测运行<select id="report-run-select" disabled><option value="">正在获取可查看的运行</option></select></label><button id="report-load" type="button" disabled>查看报告</button></div><div id="report-selection-state" class="state unavailable" role="status">先选择服务端保存的回测运行以查看报告。</div></section>
-  <section class="panel"><h2>运行版本与可用性</h2><dl id="report-summary" class="definition-grid"></dl><div id="report-unavailable" class="state unavailable" role="status" hidden></div></section>
-  <section class="panel"><h2>策略绩效与基准比较</h2><dl id="report-metrics" class="definition-grid"></dl></section>
-  <section class="panel"><h2>成本与计划/实际偏差</h2><div class="table-wrap"><pre id="report-deviation" class="report-json" tabindex="0">尚未选择报告。</pre></div></section>
+  <section id="reports-empty" class="panel state-banner empty-banner" hidden><div class="empty-banner-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M9 10h6M9 14h6M9 18h4"/></svg></div><div><strong>暂无可查看的回测运行。</strong><p>请先创建并完成研究回测后刷新，查看报告与偏差分析。</p></div></section>
+  <section class="panel report-picker" id="report-picker"><div class="section-title"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4z"/></svg><div><h2>选择回测运行</h2><p>选择一个已完成的回测运行，查看报告与偏差分析结果。</p></div></div><div class="filters"><label>回测运行<select id="report-run-select" disabled><option value="">正在获取可查看的运行</option></select></label><button class="primary" id="report-load" type="button" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>查看报告</button></div><div id="report-selection-state" class="state unavailable" role="status">先选择服务端保存的回测运行以查看报告。</div></section>
+  <div id="report-content">
+  <section class="panel"><div class="section-title"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></svg><h2>运行版本与可用性</h2></div><p id="report-summary-placeholder" class="muted">尚未选择报告。</p><dl id="report-summary" class="definition-grid"></dl><div id="report-unavailable" class="state unavailable" role="status" hidden></div></section>
+  <section class="panel"><div class="section-title"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 19V9M12 19V5M19 19v-8"/></svg><h2>绩效指标摘要</h2></div><p id="report-metrics-placeholder" class="muted">尚未选择报告。</p><div class="table-wrap"><table id="report-metrics-table"><caption>服务端返回的策略绩效和基准比较</caption><thead><tr><th scope="col">指标</th><th scope="col">值</th></tr></thead><tbody></tbody></table></div><dl id="report-metrics" class="definition-grid visually-hidden-summary"></dl></section>
+  <section class="panel"><div class="section-title"><svg aria-hidden="true" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v7c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 12v7c0 1.7 3.1 3 7 3s7-1.3 7-3v-7"/></svg><h2>成本摘要</h2></div><div class="table-wrap"><table id="report-cost-table"><caption>模拟成本摘要；不是委托依据</caption><thead><tr><th scope="col">成本项目</th><th scope="col">值</th></tr></thead><tbody></tbody></table></div></section>
+  <section class="panel"><div class="section-title"><h2>计划 / 实际偏差摘要</h2></div><div class="table-wrap"><table id="report-deviation-table"><caption>计划与人工实际成交的服务端偏差证据</caption><thead><tr><th scope="col">偏差项目</th><th scope="col">值</th></tr></thead><tbody></tbody></table></div></section>
+  <section class="panel"><h2>不可用原因与恢复路径</h2><div id="report-recovery" class="state unavailable" role="status">尚未选择报告。</div></section>
+  <details class="developer-evidence"><summary>查看原始服务端证据</summary><pre id="report-raw-json" class="report-json" tabindex="0">尚未选择报告。</pre></details>
+  <a id="report-run-link" class="report-detail-link" href="/backtests">查看运行详情与不可用原因</a>
+  </div>
   <p class="compliance-local">研究用途；不荐股、不构成投资建议；不承诺收益；不自动下单。</p>
 </section>
 {% endblock %}

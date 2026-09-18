@@ -4,7 +4,29 @@
   <div class="page-heading"><div><h1>导入授权行情</h1><p class="muted">管理员可导入本地 CSV/Parquet；Tushare 是受授权的可发布主源，AKShare 仅作只读校验，所有来源均需通过质量闸门。</p></div><a class="button-link" href="/data-quality">查看数据质量</a></div>
   <div id="data-import-permission" class="state loading" role="status">正在确认导入权限与本地授权边界…</div>
   <div id="data-import-prerequisite" class="state unavailable" role="status">本地文件、Tushare 主批次和 AKShare 校验证据均须保留来源与授权边界；仅完整 Tushare 主批次可用于后续研究，AKShare 差异只产生告警。</div>
-  <form id="data-import-form" class="panel form-grid" novalidate>
+  <div id="data-import-tabs" class="tab-list" role="tablist" aria-label="行情导入方式">
+    <button id="provider-import-tab" role="tab" type="button" aria-selected="true" aria-controls="provider-import-panel">供应商导入</button>
+    <button id="local-import-tab" role="tab" type="button" aria-selected="false" aria-controls="local-import-panel" tabindex="-1">本地文件导入</button>
+  </div>
+  <section id="provider-import-panel" class="panel tab-panel" role="tabpanel" aria-labelledby="provider-import-tab">
+    <h2>供应商导入</h2>
+    <p class="muted">Token/Refresh Token 仅从部署环境读取，页面不输入也不展示。Tushare 是主源；AKShare 只做校验，不会替代 Tushare 成为主批次。</p>
+    <div id="provider-capabilities-state" class="state loading" role="status">正在读取供应商和队列状态…</div>
+    <div id="provider-full-reason" class="state unavailable" role="status" hidden></div>
+    <form id="provider-import-form" class="form-grid" novalidate>
+      <label for="provider-import-provider">供应商<select id="provider-import-provider" name="provider"><option value="tushare">Tushare</option><option value="ifind">iFinD</option></select></label>
+      <label for="provider-import-date">交易日期<input id="provider-import-date" name="business_date" type="date" required></label>
+      <label for="provider-import-scope">范围<select id="provider-import-scope" name="scope"><option value="pilot">pilot</option><option value="full">full</option></select></label>
+      <div class="wide actions"><button id="provider-import-submit" class="primary" type="submit" disabled>提交供应商导入</button><span id="provider-queue-status" class="muted">队列状态：读取中…</span></div>
+      <div id="provider-import-confirmation" class="confirmation-summary wide" hidden aria-live="polite"><h3>确认提交供应商导入</h3><dl id="provider-import-confirmation-summary" class="definition-grid"></dl><p>预期影响：创建受服务端权限、幂等、队列和质量门禁约束的导入任务；不会在浏览器中读取或展示 Token。</p><div class="actions"><button id="provider-import-confirm" class="primary" type="button">确认提交</button></div></div>
+    </form>
+    <div id="provider-import-state" class="state" role="status">选择供应商和交易日期后提交 pilot 导入。</div>
+    <dl id="provider-import-result" class="definition-grid"></dl>
+    <div id="provider-import-links" class="actions" hidden></div>
+    <button id="provider-import-refresh" type="button" hidden>手动刷新任务</button>
+  </section>
+  <section id="local-import-panel" class="panel tab-panel" role="tabpanel" aria-labelledby="local-import-tab" hidden>
+  <form id="data-import-form" class="form-grid" novalidate>
     <div id="data-import-form-error" class="state error wide" role="alert" hidden></div>
     <label class="wide" for="data-import-file">本地文件路径<span class="muted">必填；仅限获授权的本地 CSV 或 Parquet。</span><input id="data-import-file" name="file_location" required maxlength="1024" aria-describedby="data-import-file-error" placeholder="F:\\PROJECT\\Money\\data\\authorized_sample.csv"><span id="data-import-file-error" class="field-error" hidden></span></label>
     <label for="data-import-source">来源<span class="muted">必填；用于审计追溯。</span><input id="data-import-source" name="source_name" required maxlength="128" aria-describedby="data-import-source-error" placeholder="authorized-simulation"><span id="data-import-source-error" class="field-error" hidden></span></label>
@@ -14,7 +36,9 @@
     <label class="wide" for="data-import-license">授权说明<span class="muted">必填；说明授权范围、来源和使用限制。</span><textarea id="data-import-license" name="license_note" required maxlength="2048" aria-describedby="data-import-license-error" placeholder="说明本地文件的授权范围、来源和使用限制"></textarea><span id="data-import-license-error" class="field-error" hidden></span></label>
     <label for="data-import-version">版本（可选）<input id="data-import-version" name="version" maxlength="64" placeholder="留空由系统生成内容版本"></label>
     <div class="wide actions"><button class="primary" id="data-import-submit" type="submit" data-submit-label="导入并校验">导入并校验</button><span class="muted">服务端会保留授权、质量和审计边界；页面不会绕过这些检查。</span></div>
+    <div id="data-import-confirmation" class="confirmation-summary wide" hidden aria-live="polite"><h3>确认本地导入并校验</h3><dl id="data-import-confirmation-summary" class="definition-grid"></dl><p>预期影响：读取指定授权文件并创建不可变数据批次，随后执行质量门禁；不会替换历史批次或绕过服务端审计。</p><div class="actions"><button id="data-import-confirm" class="primary" type="button">确认提交</button></div></div>
   </form>
+  </section>
   <section class="panel"><h2>导入结果</h2><div id="data-import-state" class="state" role="status">填写文件与授权信息后开始导入。</div><dl id="data-import-result" class="definition-grid"></dl><div id="data-import-links" class="actions" hidden></div><h3>质量错误与警告</h3><ul id="data-import-issues"><li>尚未执行导入。</li></ul></section>
 </section>
 {% endblock %}

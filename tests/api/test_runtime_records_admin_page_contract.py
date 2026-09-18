@@ -1,8 +1,11 @@
 """Rendered contracts for run details, manual records, and management audit views."""
 
+from uuid import uuid4
+
 from fastapi.testclient import TestClient
 
 from app.core.config import load_settings
+from app.core.security import LocalAccount, PasswordHasher, Role
 from app.main import create_app
 
 
@@ -73,3 +76,45 @@ def test_admin_page_requires_retry_evidence_and_preserves_audit_identifiers() ->
     assert "renderFailure" in script.text
     assert "request_id" in script.text
     assert "Idempotency-Key" in script.text
+
+
+def test_supplier_import_page_exposes_persistent_job_states_and_recovery_paths() -> None:
+    hasher = PasswordHasher()
+    client = TestClient(
+        create_app(
+            settings=load_settings({"APP_ENV": "test", "AUTH_SECRET_KEY": "test-secret"}),
+            accounts={
+                "admin": LocalAccount(uuid4(), "admin", hasher.hash("pw"), frozenset({Role.ADMIN}))
+            },
+        )
+    )
+    token = client.post(
+        "/api/v1/auth/login",
+        headers={"Idempotency-Key": "supplier-page-login"},
+        json={"username": "admin", "password": "pw"},
+    ).json()["data"]["access_token"]
+    client.cookies.set("research_page_access", token)
+
+    page = client.get("/data-import")
+    script = client.get("/static/js/data_import.js")
+
+    assert page.status_code == 200
+    for identifier in (
+        'id="provider-import-form"',
+        'id="provider-import-provider"',
+        'id="provider-import-date"',
+        'id="provider-import-scope"',
+        'id="provider-import-state"',
+        'id="provider-import-refresh"',
+        'id="provider-import-links"',
+    ):
+        assert identifier in page.text
+    assert "/api/v1/admin/data-imports/capabilities" in script.text
+    assert "/api/v1/jobs/" in script.text
+    assert "setInterval" in script.text
+    assert "60000" in script.text
+    assert "function resumeProviderPolling" in script.text
+    assert "providerRefresh.addEventListener('click', resumeProviderPolling)" in script.text
+    assert "getFullYear()" in script.text
+    assert "providerDate.value = today.toISOString().slice(0, 10)" not in script.text
+    assert "AKShare 只做校验" in page.text

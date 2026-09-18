@@ -9,6 +9,7 @@
     return Array.isArray(value) ? value.join('、') : String(value);
   };
   const request = async (url) => window.ResearchApp.readJson(await window.ResearchApp.apiFetch(url));
+  const statusLabel = (value, domain) => window.ResearchApp.statusLabel ? window.ResearchApp.statusLabel(value, domain) : display(value);
   const state = (text, kind, requestId) => window.ResearchApp.renderState(
     $('#daily-report-state'), kind, text, requestId,
   );
@@ -76,12 +77,12 @@
     showPairs('#daily-report-summary', [
       ['报告日期', report.report_date],
       ['运行号', report.run_id],
-      ['状态', report.status],
+      ['状态', statusLabel(report.status, 'job')],
       ['结果可用', report.result_usable == null ? '--' : report.result_usable ? '是' : '否'],
-      ['风险状态', report.risk_state || report.risk?.state],
+      ['风险状态', statusLabel(report.risk_state || report.risk?.state, 'risk')],
     ]);
     showPairs('#daily-report-quality', [
-      ['数据质量', report.data_quality],
+      ['数据质量', statusLabel(report.data_quality, 'quality')],
       ['数据批次', report.data_batch_id || report.source_batch_id || report.batch_id],
       ['数据来源', report.source_name || report.data_source],
       ['数据版本', report.data_version || report.batch_version || report.source_version],
@@ -110,7 +111,7 @@
       (item) => item.plan_no || item.plan_id,
       (item) => item.side,
       (item) => item.quantity,
-      (item) => item.status,
+       (item) => statusLabel(item.status, 'plan'),
       (item) => item.execution_date || item.expires_at,
     ], '暂无人工确认计划。');
     return unavailable;

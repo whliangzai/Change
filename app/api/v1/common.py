@@ -200,6 +200,7 @@ class InMemoryResearchRepository:
         if record is None:
             return None
         return {
+            **deepcopy(record),
             "strategy_version_id": strategy_id,
             "base_version": None,
             "changes": record.get("parameters", {}),
@@ -380,7 +381,16 @@ def repository(request: Request) -> InMemoryResearchRepository:
 
 
 def audit(
-    request: Any, principal: Any, action: str, object_type: str, object_id: str | None, result: str
+    request: Any,
+    principal: Any,
+    action: str,
+    object_type: str,
+    object_id: str | None,
+    result: str,
+    *,
+    idempotency_key: str | None = None,
+    before_summary: dict[str, Any] | None = None,
+    after_summary: dict[str, Any] | None = None,
 ) -> None:
     writer: AuditWriter = request.app.state.audit_writer
     writer.append(
@@ -393,6 +403,12 @@ def audit(
             object_id=object_id,
             request_id=request.state.request_id,
             result=result,
-            idempotency_key=getattr(request.state, "idempotency_key", None),
+            idempotency_key=(
+                idempotency_key
+                if idempotency_key is not None
+                else getattr(request.state, "idempotency_key", None)
+            ),
+            before_summary=before_summary,
+            after_summary=after_summary,
         )
     )

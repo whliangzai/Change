@@ -15,6 +15,7 @@
     <label for="daily-flow-equity">初始权益<input id="daily-flow-equity" name="initial_equity" value="20000.00" inputmode="decimal" required aria-describedby="daily-flow-initial_equity-error"><span id="daily-flow-initial_equity-error" class="field-error" hidden></span></label>
     <label for="daily-flow-ratio">最大投资比例<input id="daily-flow-ratio" name="max_investment_ratio" value="0.70" inputmode="decimal" required aria-describedby="daily-flow-max_investment_ratio-error"><span id="daily-flow-max_investment_ratio-error" class="field-error" hidden></span></label>
     <div class="wide actions"><button class="primary" id="daily-flow-submit" type="submit" data-submit-label="执行日终">执行日终</button><span class="muted">提交仅请求服务端生成研究结果；后续计划仍需人工确认。</span></div>
+    <div id="daily-flow-confirmation" class="confirmation-summary wide" hidden aria-live="polite"><h3>确认执行日终</h3><dl id="daily-flow-confirmation-summary" class="definition-grid"></dl><p>预期影响：服务端将按所选数据、策略、版本和日期生成研究候选与 T+1 人工计划；不会自动下单、撤单或划转资金。</p><div class="actions"><button id="daily-flow-confirm" class="primary" type="button">确认提交</button></div></div>
   </form>
   <section class="panel"><h2>日终结果</h2><div id="daily-flow-state" class="state" role="status">请选择可用数据批次和已发布策略版本。</div><dl id="daily-flow-result" class="definition-grid"></dl><div id="daily-flow-links" class="actions" hidden></div><p id="daily-flow-empty" class="muted" hidden>本次运行未生成候选或 T+1 计划。请检查数据覆盖、策略条件和风险限制；这不是成功成交。</p></section>
 </section>

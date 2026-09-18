@@ -4,84 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title|default('研究验证系统') }} | A股短线量化验证</title>
-  <style>
-    :root { color-scheme: light; --frame: #102a43; --nav: #173f5f; --ink: #17212b; --muted: #5d6b78; --line: #d9e0e7; --accent: #185adb; --accent-strong: #1048b8; --danger: #b42318; --ok: #16704a; --warning: #f6c344; --bg: #f4f6f8; --surface: #fff; --focus: #185adb; }
-    * { box-sizing: border-box; }
-    html { background: var(--bg); }
-    body { min-width: 320px; margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
-    a { color: var(--accent); }
-    a:hover { color: var(--accent-strong); }
-    button, input, select, textarea { font: inherit; }
-    button, input, select, textarea, a { -webkit-tap-highlight-color: transparent; }
-    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
-    .skip-link { position: fixed; z-index: 10; top: 8px; left: 8px; padding: 8px 12px; border: 1px solid var(--accent); border-radius: 4px; background: var(--surface); color: var(--accent); transform: translateY(-150%); }
-    .skip-link:focus { transform: translateY(0); }
-    header { background: var(--frame); color: #fff; }
-    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 1200px; margin: auto; padding: 12px 20px; }
-    .brand { color: #fff; font-size: 16px; font-weight: 700; text-decoration: none; white-space: nowrap; }
-    .session { display: flex; align-items: center; gap: 10px; min-width: 0; color: #d9e6f2; font-size: 13px; }
-    #current-user { min-width: 0; overflow-wrap: anywhere; }
-    .session button { flex: 0 0 auto; border: 1px solid #8fb3d8; border-radius: 4px; padding: 5px 10px; background: transparent; color: #fff; cursor: pointer; }
-    .session button:hover:not(:disabled) { background: #214e73; }
-    nav { overflow-x: auto; background: var(--nav); }
-    nav ul { display: flex; gap: 4px; width: max-content; min-width: 100%; max-width: 1200px; margin: 0 auto; padding: 0 20px; list-style: none; }
-    nav a { display: block; border-bottom: 3px solid transparent; padding: 10px 12px; color: #d9e6f2; text-decoration: none; white-space: nowrap; }
-    nav a:hover, nav a[aria-current="page"] { border-bottom-color: var(--warning); background: #1f537b; color: #fff; }
-    .compliance { max-width: 1200px; margin: 0 auto; padding: 8px 20px; color: #ffe7b3; font-size: 12px; }
-    main { max-width: 1200px; min-width: 0; min-height: 70vh; margin: 0 auto; padding: 24px 20px 52px; }
-    footer { border-top: 1px solid var(--line); padding: 14px 20px; background: var(--surface); color: var(--muted); font-size: 12px; text-align: center; }
-    .page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
-    .page-heading h1 { margin: 0 0 4px; font-size: 24px; line-height: 1.25; }
-    .page-heading p { margin: 0; color: var(--muted); }
-    .panel, .detail-panel { margin: 14px 0; padding: 16px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
-    .filters, .form-grid, .actions { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
-    .form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; }
-    .form-grid label, .filters label { display: grid; gap: 5px; color: var(--muted); font-size: 13px; }
-    .form-grid input, .filters input, .filters select, .form-grid select, .form-grid textarea { width: 100%; min-height: 36px; padding: 7px; border: 1px solid #b8c4ce; border-radius: 4px; background: var(--surface); color: var(--ink); }
-    .wide { grid-column: 1 / -1; }
-    .table-wrap { max-width: 100%; overflow: auto; }
-    table { width: 100%; border-collapse: collapse; background: var(--surface); }
-    th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
-    th { background: #edf2f7; color: #44515e; font-size: 12px; }
-    .numeric { min-width: 7.5rem; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .date-value { min-width: 8.5rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    code { font-size: 12px; }
-    .definition-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 18px; margin: 0; }
-    .definition-grid dt { color: var(--muted); font-weight: 600; }
-    .definition-grid dd { margin: 0; overflow-wrap: anywhere; }
-    .pagination { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
-    .muted { color: var(--muted); }
-    .button-link, .api-reference { display: inline-block; border: 1px solid var(--accent); border-radius: 4px; padding: 7px 10px; background: var(--surface); color: var(--accent); text-decoration: none; }
-    .detail-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-    .state { margin: 12px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
-    .state[hidden], .field-error[hidden] { display: none; }
-    .state.error { border-color: #f1b5b0; background: #fff7f6; color: var(--danger); }
-    .state.success { border-color: #9bd8bb; background: #f3fcf7; color: var(--ok); }
-    .state.loading, .state.unavailable, .state.permission { color: var(--muted); }
-    .field-error { margin: 4px 0 0; color: var(--danger); font-size: 13px; }
-    button { border: 1px solid #aab7c3; border-radius: 4px; padding: 7px 10px; background: var(--surface); color: var(--ink); cursor: pointer; }
-    button.primary { border: 1px solid var(--accent); padding: 9px 14px; background: var(--accent); color: #fff; }
-    button.primary:hover:not(:disabled) { background: var(--accent-strong); }
-    button:disabled { cursor: not-allowed; opacity: .6; }
-    .login-page main { display: grid; min-height: calc(100vh - 49px); padding-top: 32px; }
-    .login-panel { width: min(100%, 420px); align-self: start; margin: min(8vh, 72px) auto 0; padding: 24px; }
-    .login-panel h1 { margin: 0 0 6px; font-size: 24px; line-height: 1.25; }
-    .login-panel > p { margin: 0; color: var(--muted); }
-    .login-field { display: block; margin: 14px 0; color: var(--ink); font-weight: 600; }
-    .login-field input { display: block; width: 100%; min-height: 40px; margin-top: 5px; padding: 9px; border: 1px solid #b8c4ce; border-radius: 4px; background: var(--surface); color: var(--ink); font-weight: 400; }
-    .login-field input[aria-invalid="true"] { border-color: var(--danger); }
-    .login-submit { width: 100%; min-height: 42px; }
-    @media(max-width:700px) { .topbar { align-items: flex-start; flex-direction: column; padding: 12px 14px; } .session { width: 100%; justify-content: space-between; } nav ul { padding: 0 8px; } nav a { padding: 10px; } .compliance { padding: 8px 14px; } main { padding: 18px 14px 42px; } .page-heading, .detail-heading { align-items: stretch; flex-direction: column; } .page-heading > .actions, .page-heading > .primary, .page-heading > .button-link { width: 100%; } .form-grid { grid-template-columns: 1fr; } .definition-grid { grid-template-columns: 1fr; } .definition-grid dd { margin-bottom: 8px; } .login-page main { min-height: calc(100vh - 49px); padding-top: 18px; } .login-panel { margin-top: 24px; padding: 18px; } }
-    @media(prefers-reduced-motion:reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
-  </style>
+  <link rel="stylesheet" href="/static/css/app.css?v=layout-fix-20260918-2">
+  <link rel="stylesheet" href="/static/css/research-pages.css?v=layout-fix-20260918-2">
+  <!-- Shared CSS keeps button:focus-visible and @media(max-width:700px) rules in one auditable stylesheet. -->
 </head>
 {% set is_login = request is defined and request.url.path == '/login' %}
-<body class="{% if is_login %}login-page{% endif %}" data-page-path="{{ request.url.path if request is defined else '' }}">
+{% set is_wide_research = request is defined and request.url.path in ['/data-quality', '/strategies', '/backtests', '/reports'] %}
+<body class="{% if is_login %}login-page {% endif %}{% if request is defined and request.url.path == '/universe' %}universe-shell {% endif %}{% if is_wide_research %}wide-research-shell{% endif %}" data-page-path="{{ request.url.path if request is defined else '' }}">
 <a class="skip-link" href="#main-content">跳到主内容</a>
 {% if not is_login %}
 <header>
-  <div class="topbar"><a class="brand" href="/dashboard">A股短线量化验证系统</a><div class="session" aria-live="polite"><span id="current-user">未登录</span><button id="logout-button" type="button" hidden>退出登录</button></div></div>
-  <nav aria-label="主导航"><ul><li><a href="/dashboard">总览</a></li><li><a href="/data-quality">数据质量</a></li><li data-admin-nav hidden><a href="/data-import">导入行情</a></li><li><a href="/universe">股票池</a></li><li><a href="/strategies">策略版本</a></li><li><a href="/backtests">回测</a></li><li data-admin-nav hidden><a href="/daily-flow">执行日终</a></li><li><a href="/daily-reports/{{ data_date|default('') }}">日报</a></li><li><a href="/order-plans">人工计划</a></li><li><a href="/executions">人工成交</a></li><li><a href="/reports">报告</a></li><li data-admin-nav hidden><a href="/admin">管理与审计</a></li></ul></nav>
+  <div class="topbar"><a class="brand" href="/dashboard">A股短线量化验证系统</a><button id="nav-toggle" class="nav-toggle" type="button" aria-controls="main-nav" aria-expanded="false" aria-label="打开主导航">菜单</button><div class="session" aria-live="polite"><span id="current-user">未登录</span><button id="theme-toggle" class="theme-toggle" type="button" aria-label="切换深色模式" aria-pressed="false">深色模式</button><button id="logout-button" type="button" hidden>退出登录</button></div></div>
+  <nav id="main-nav" data-open="false" aria-label="主导航"><ul><li class="nav-group"><span class="nav-group-label">观察</span><a href="/dashboard">总览</a><a href="/data-quality">数据质量</a><a href="/universe">股票池</a></li><li class="nav-group"><span class="nav-group-label">研究</span><a href="/strategies">策略版本</a><a href="/backtests">回测</a><a href="/reports">报告</a></li><li class="nav-group"><span class="nav-group-label">运营与人工确认</span><span data-admin-nav hidden><a href="/daily-flow">执行日终</a></span><a href="/daily-reports/{{ data_date|default('') }}">日报</a><a href="/order-plans">人工计划</a><a href="/executions">人工成交</a></li><li class="nav-group" data-admin-nav hidden><span class="nav-group-label">管理</span><a href="/data-import">导入行情</a><a href="/admin">管理与审计</a></li></ul></nav>
   <div class="compliance" role="note">研究用途；不荐股、不构成投资建议；不承诺收益；仅支持人工确认与人工成交记录，不自动下单。</div>
 </header>
 {% endif %}
@@ -90,7 +24,7 @@
 <script>
   (function () {
     "use strict";
-    const ACCESS = "money.access_token", REFRESH = "money.refresh_token", USER = "money.user", path = document.body.dataset.pagePath || "", methods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+    const ACCESS = "money.access_token", REFRESH = "money.refresh_token", USER = "money.user", THEME = "money.theme", path = document.body.dataset.pagePath || "", methods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
     const idem = () => crypto.randomUUID ? crypto.randomUUID() : "idem-" + Date.now() + "-" + Math.random().toString(16).slice(2);
     const read = key => { try { return localStorage.getItem(key); } catch (_) { return null; } }, write = (key, value) => { try { localStorage.setItem(key, value); } catch (_) {} }, remove = key => { try { localStorage.removeItem(key); } catch (_) {} };
     const claims = token => { try { const payload = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"); return JSON.parse(atob(payload.padEnd(payload.length + (4 - payload.length % 4) % 4, "="))); } catch (_) { return null; } };
@@ -100,11 +34,67 @@
     const message = (status, payload) => payload && payload.error && payload.error.message || ({ 401: "登录已失效，请重新登录。", 403: "权限不足，当前角色不能执行此操作。", 409: "请求状态冲突或重复提交，请刷新后重试。", 422: "请求参数未通过校验，请检查输入。", 503: "服务暂不可用，请确认数据库/队列状态后重试。" }[status] || "请求失败，请稍后重试。");
     async function apiFetch(url, options) { const request = Object.assign({}, options || {}), method = (request.method || "GET").toUpperCase(), headers = new Headers(request.headers || {}), token = read(ACCESS); if (token) headers.set("Authorization", "Bearer " + token); if (methods.has(method) && !headers.has("Idempotency-Key")) headers.set("Idempotency-Key", idem()); if (request.body && typeof request.body !== "string" && !(request.body instanceof FormData)) { headers.set("Content-Type", "application/json"); request.body = JSON.stringify(request.body); } request.headers = headers; const response = await fetch(url, request); if (response.status === 401 && url !== "/api/v1/auth/login" && read(REFRESH) && !request.__retried) { try { const refreshed = await apiFetch("/api/v1/auth/refresh", { method: "POST", body: { refresh_token: read(REFRESH) }, __retried: true }); if (refreshed.ok) { save((await refreshed.json()).data); request.__retried = true; return apiFetch(url, request); } } catch (_) {} } if (response.status === 401) { clear(); if (path !== "/login") location.href = "/login?next=" + encodeURIComponent(location.pathname); } return response; }
     const readJson = async response => { let payload = null; try { payload = await response.json(); } catch (_) {} if (!response.ok) { const error = new Error(message(response.status, payload)); error.status = response.status; error.payload = payload; throw error; } return payload; };
-    const renderState = (target, state, text, requestId) => { const element = typeof target === "string" ? document.querySelector(target) : target; if (!element) return; element.hidden = false; element.className = "state " + state; element.textContent = text + (requestId ? "（请求号：" + requestId + "）" : ""); };
-    window.ResearchApp = { apiFetch, readJson, saveTokens: save, clearTokens: clear, renderState, errorMessage: message, idempotency: idem, getToken: () => read(ACCESS), getRefreshToken: () => read(REFRESH) };
+    const statusLabels = {
+      QUEUED: "排队中", READY: "待执行", RUNNING: "运行中", SUCCEEDED: "已完成", FAILED: "失败", UNAVAILABLE: "不可用",
+      PENDING_CONFIRMATION: "待人工确认", CONFIRMED: "已确认", SKIPPED: "已跳过", CONFIRM: "确认计划", SKIP: "跳过计划", PARTIALLY_FILLED: "部分成交", FILLED: "已成交",
+      AVAILABLE: "可用", WARNING_AVAILABLE: "可用（有警告）", VALIDATING: "校验中", DRAFT: "草稿", PENDING_REVIEW: "待审核",
+      PUBLISHED: "已发布", ARCHIVED: "已归档", NORMAL: "正常", STOP_NEW: "停止新增", MANUAL_REVIEW: "人工复核",
+    };
+    const statusClass = (status, domain) => {
+      const value = String(status || "").toUpperCase();
+      if (["SUCCEEDED", "AVAILABLE", "WARNING_AVAILABLE", "CONFIRMED", "FILLED", "PUBLISHED", "NORMAL"].includes(value)) return value === "WARNING_AVAILABLE" ? "warning" : "success";
+      if (["FAILED", "UNAVAILABLE", "SKIPPED", "STOP_NEW", "ERROR"].includes(value)) return "error";
+      if (["RUNNING", "QUEUED", "READY", "VALIDATING", "PENDING_CONFIRMATION", "PENDING_REVIEW", "MANUAL_REVIEW", "PARTIALLY_FILLED", "WARNING"].includes(value)) return "warning";
+      if (["DRAFT", "ARCHIVED"].includes(value)) return "neutral";
+      return domain === "permission" ? "permission" : "neutral";
+    };
+    const statusLabel = (status, domain) => {
+      const value = String(status || "").toUpperCase();
+      return statusLabels[value] || (status == null || status === "" ? "未提供" : String(status));
+    };
+    const renderState = (target, state, text, requestId) => {
+      const element = typeof target === "string" ? document.querySelector(target) : target;
+      if (!element) return;
+      element.hidden = false;
+      element.className = "state " + (state || "");
+      element.replaceChildren();
+      const messageNode = document.createElement("span");
+      messageNode.textContent = text || "";
+      element.append(messageNode);
+      if (requestId) {
+        const evidence = document.createElement("span");
+        evidence.className = "request-id";
+        evidence.textContent = "请求号：" + String(requestId);
+        evidence.title = "可将此请求号复制给运维或审核人员定位服务端证据。";
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.className = "button-quiet copy-request-id";
+        copy.textContent = "复制";
+        copy.setAttribute("aria-label", "复制请求号");
+        copy.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(String(requestId));
+            copy.textContent = "已复制";
+          } catch (_) {
+            copy.textContent = "请手动复制";
+          }
+        });
+        evidence.append(" ", copy);
+        element.append(evidence);
+      }
+    };
+    window.ResearchApp = { apiFetch, readJson, saveTokens: save, clearTokens: clear, renderState, statusLabel, statusClass, errorMessage: message, idempotency: idem, getToken: () => read(ACCESS), getRefreshToken: () => read(REFRESH) };
+    const themeButton = document.getElementById("theme-toggle");
+    const applyTheme = theme => { if (theme) document.documentElement.dataset.theme = theme; else delete document.documentElement.dataset.theme; if (themeButton) { const dark = (theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark"; themeButton.textContent = dark ? "浅色模式" : "深色模式"; themeButton.setAttribute("aria-pressed", String(dark)); themeButton.setAttribute("aria-label", dark ? "切换浅色模式" : "切换深色模式"); } };
+    applyTheme(read(THEME));
+    if (themeButton) themeButton.addEventListener("click", () => { const current = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"); const next = current === "dark" ? "light" : "dark"; write(THEME, next); applyTheme(next); });
     update();
     const logout = document.getElementById("logout-button"); if (logout) logout.addEventListener("click", async () => { logout.disabled = true; logout.textContent = "正在退出..."; try { const refreshToken = read(REFRESH); await apiFetch("/api/v1/auth/logout", { method: "POST", body: refreshToken ? { refresh_token: refreshToken } : {} }); } catch (_) {} clear(); location.href = "/login"; });
-    const activePath = path === "/" ? "/dashboard" : path; document.querySelectorAll("nav a").forEach(link => { if (link.getAttribute("href").split("?")[0] === activePath) link.setAttribute("aria-current", "page"); });
+    const nav = document.getElementById("main-nav"), navToggle = document.getElementById("nav-toggle");
+    const setNavOpen = open => { if (!nav || !navToggle) return; nav.dataset.open = String(open); navToggle.textContent = open ? "关闭" : "菜单"; navToggle.setAttribute("aria-expanded", String(open)); navToggle.setAttribute("aria-label", open ? "关闭主导航" : "打开主导航"); };
+    const closeNav = () => setNavOpen(false);
+    if (nav && navToggle) { navToggle.addEventListener("click", () => { const open = nav.dataset.open === "true"; setNavOpen(!open); if (!open) nav.querySelector("a")?.focus(); }); nav.querySelectorAll("a").forEach(link => link.addEventListener("click", closeNav)); }
+    const activePath = path === "/" ? "/dashboard" : path; document.querySelectorAll("nav a").forEach(link => { const navPath = link.getAttribute("href").split("?")[0]; const active = navPath === activePath || (navPath === "/backtests" && activePath.startsWith("/backtests/")) || (navPath.startsWith("/daily-reports/") && activePath.startsWith("/daily-reports/")); if (active) link.setAttribute("aria-current", "page"); });
   }());
 </script>
 {% block scripts %}{% endblock %}

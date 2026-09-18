@@ -5,8 +5,8 @@
   <div id="daily-report-state" class="state loading" role="status">正在加载日报…</div>
   <section class="panel"><h2>运行与风险</h2><dl id="daily-report-summary" class="definition-grid"></dl><div id="daily-report-unavailable" class="state unavailable" role="status" hidden></div></section>
   <section class="panel"><h2>数据来源与市场开关</h2><dl id="daily-report-quality" class="definition-grid"></dl></section>
-  <section class="panel"><h2>账户与持仓</h2><dl id="daily-report-account" class="definition-grid"></dl><div class="table-wrap"><table id="daily-report-holdings"><thead><tr><th>标的</th><th>数量</th><th>可用数量</th><th>成本</th><th>市值</th></tr></thead><tbody></tbody></table></div></section>
-  <section class="panel"><h2>候选与计划</h2><div class="table-wrap"><table id="daily-report-candidates"><thead><tr><th>标的</th><th>条件</th><th>分数</th><th>风险标签</th></tr></thead><tbody></tbody></table></div><div class="table-wrap"><table id="daily-report-plans"><thead><tr><th>计划号</th><th>方向</th><th>数量</th><th>状态</th><th>到期/执行日</th></tr></thead><tbody></tbody></table></div></section>
+  <section class="panel"><h2>账户与持仓</h2><dl id="daily-report-account" class="definition-grid"></dl><div class="table-wrap"><table id="daily-report-holdings"><caption>人工确认账户与持仓快照</caption><thead><tr><th scope="col">标的</th><th scope="col">数量</th><th scope="col">可用数量</th><th scope="col">成本</th><th scope="col">市值</th></tr></thead><tbody></tbody></table></div></section>
+  <section class="panel"><h2>候选与计划</h2><div class="table-wrap"><table id="daily-report-candidates"><caption>策略候选与风险标签</caption><thead><tr><th scope="col">标的</th><th scope="col">条件</th><th scope="col">分数</th><th scope="col">风险标签</th></tr></thead><tbody></tbody></table></div><div class="table-wrap"><table id="daily-report-plans"><caption>T+1 人工计划，不代表成交</caption><thead><tr><th scope="col">计划号</th><th scope="col">方向</th><th scope="col">数量</th><th scope="col">状态</th><th scope="col">到期/执行日</th></tr></thead><tbody></tbody></table></div></section>
   <p class="compliance-local">研究用途；不荐股、不构成投资建议；不承诺收益；不自动下单。</p>
 </section>
 {% endblock %}

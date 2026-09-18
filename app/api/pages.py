@@ -137,8 +137,14 @@ def daily_flow_page(request: Request, _: PageAdmin) -> Any:
 
 
 @router.get("/order-plans")
-def order_plans_page(request: Request) -> Any:
-    return _render(request, "order_plans.html", title="人工计划确认")
+def order_plans_page(request: Request, execution_date: date | None = None) -> Any:
+    selected_date = execution_date.isoformat() if execution_date else date.today().isoformat()
+    return _render(
+        request,
+        "order_plans.html",
+        title="人工计划确认",
+        execution_date=selected_date,
+    )
 
 
 @router.get("/executions")

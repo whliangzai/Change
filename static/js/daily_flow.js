@@ -6,6 +6,8 @@
   const submit = $('#daily-flow-submit');
   let isSubmitting = false;
   const available = { batch: false, strategy: false };
+  let confirming = false;
+  let pendingValues = null;
   const fieldIds = { data_batch_id: 'data_batch_id', strategy_version_id: 'strategy_version_id', cost_config_id: 'cost_config_id', rule_config_id: 'rule_config_id', as_of_date: 'as_of_date', information_cutoff_at: 'information_cutoff_at', initial_equity: 'initial_equity', max_investment_ratio: 'max_investment_ratio' };
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const state = (text, kind, requestId) => window.ResearchApp.renderState($('#daily-flow-state'), kind || '', text, requestId);
@@ -29,6 +31,20 @@
     const details = error.payload?.error?.details;
     if (!Array.isArray(details)) return;
     details.forEach((detail) => setFieldError(detail.field || (Array.isArray(detail.loc) ? detail.loc.at(-1) : ''), detail.reason || detail.msg || error.message));
+  };
+  const statusLabel = (value, domain) => window.ResearchApp.statusLabel ? window.ResearchApp.statusLabel(value, domain) : String(value ?? '--');
+  const appendSummary = (target, pairs) => {
+    target.replaceChildren();
+    pairs.forEach(([label, value]) => {
+      const term = document.createElement('dt'); term.textContent = label;
+      const definition = document.createElement('dd'); definition.textContent = String(value ?? '--'); target.append(term, definition);
+    });
+  };
+  const setConfirmationMode = (enabled) => {
+    confirming = enabled;
+    form.querySelectorAll('input, select, textarea').forEach((element) => { if (element.id !== 'daily-flow-submit' && element.id !== 'daily-flow-confirm') element.disabled = enabled; });
+    $('#daily-flow-confirmation').hidden = !enabled;
+    submit.textContent = enabled ? '返回修改' : submit.dataset.submitLabel;
   };
   const updateAvailability = () => {
     const ready = admin && available.batch && available.strategy;
@@ -61,34 +77,44 @@
   }
   $('#daily-flow-permission').textContent = admin ? '当前会话显示管理员权限；服务端仍会在提交时执行 RBAC、审计和幂等处理。' : '当前会话未显示管理员权限；服务端会拒绝无权请求。';
   $('#daily-flow-permission').className = `state ${admin ? 'success' : 'permission'}`;
+  async function submitConfirmed() {
+    const values = pendingValues;
+    if (!values || isSubmitting) return;
+    isSubmitting = true; updateAvailability(); $('#daily-flow-confirm').disabled = true; submit.textContent = '正在执行日终…'; $('#daily-flow-empty').hidden = true;
+    state('正在执行日终；只会生成研究候选与 T+1 人工计划，请勿重复提交。', 'loading');
+    try {
+      const payload = await request('/api/v1/daily-flows', { method: 'POST', body: values });
+      const result = payload.data || {};
+      $('#daily-flow-result').innerHTML = [['运行状态', statusLabel(result.status, 'job')], ['运行 ID', result.run_id], ['候选', (result.signal_symbols || []).join('、') || '无'], ['T+1 计划数', result.plan_count]].map(([key, value]) => `<dt>${key}</dt><dd><code>${esc(value ?? '--')}</code></dd>`).join('');
+      const next = (result.plan_execution_dates || [])[0]; const links = $('#daily-flow-links');
+      links.innerHTML = `<a class="button-link" href="/daily-reports/${encodeURIComponent(values.as_of_date)}">查看日报与候选</a>${next ? `<a class="button-link" href="/order-plans?execution_date=${encodeURIComponent(next)}">查看 T+1 人工计划</a>` : ''}`; links.hidden = false;
+      if (!(result.signal_symbols || []).length || !result.plan_count) $('#daily-flow-empty').hidden = false;
+      state(`日终已由服务端受理，运行状态：${statusLabel(result.status || 'QUEUED', 'job')}。这不代表已下单或已成交。`, result.status === 'SUCCEEDED' ? 'success' : 'loading', payload.request_id);
+      setConfirmationMode(false); pendingValues = null;
+    } catch (error) {
+      mapServerErrors(error); showFormError(error.message || '日终无法执行；请检查数据、版本与服务状态。');
+      state(error.message || '日终无法执行；数据不足、质量失败或前置版本不可用时不会生成结果。', error.status === 403 ? 'permission' : (error.status === 503 ? 'unavailable' : 'error'), error.payload?.request_id);
+      $('#daily-flow-confirm').disabled = false;
+    }
+    isSubmitting = false; updateAvailability(); submit.textContent = confirming ? '返回修改' : submit.dataset.submitLabel;
+  }
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (isSubmitting || submit.disabled) return;
+    if (confirming) { setConfirmationMode(false); pendingValues = null; state('已返回修改，尚未提交日终。', 'unavailable'); submit.focus(); return; }
     clearFieldErrors();
     const values = Object.fromEntries(new FormData(form).entries());
     const required = ['data_batch_id', 'strategy_version_id', 'cost_config_id', 'rule_config_id', 'as_of_date', 'information_cutoff_at', 'initial_equity', 'max_investment_ratio'];
     const missing = required.filter((field) => !String(values[field] || '').trim());
     if (missing.length) { missing.forEach((field) => setFieldError(field, '此项为必填。')); showFormError('请检查标记的字段后重试。'); form.elements.namedItem(missing[0])?.focus(); return; }
     values.information_cutoff_at = iso(values.information_cutoff_at);
-    isSubmitting = true; updateAvailability(); submit.textContent = '正在执行日终…'; $('#daily-flow-empty').hidden = true;
-    state('正在执行日终；只会生成研究候选与 T+1 人工计划，请勿重复提交。', 'loading');
-    try {
-      const payload = await request('/api/v1/daily-flows', { method: 'POST', body: values });
-      const result = payload.data || {};
-      $('#daily-flow-result').innerHTML = [['运行状态', result.status], ['运行 ID', result.run_id], ['候选', (result.signal_symbols || []).join('、') || '无'], ['T+1 计划数', result.plan_count]].map(([key, value]) => `<dt>${key}</dt><dd><code>${esc(value ?? '--')}</code></dd>`).join('');
-      const next = (result.plan_execution_dates || [])[0];
-      const links = $('#daily-flow-links');
-      links.innerHTML = `<a class="button-link" href="/daily-reports/${encodeURIComponent(values.as_of_date)}">查看日报与候选</a>${next ? `<a class="button-link" href="/order-plans?execution_date=${encodeURIComponent(next)}">查看 T+1 人工计划</a>` : ''}`;
-      links.hidden = false;
-      if (!(result.signal_symbols || []).length || !result.plan_count) $('#daily-flow-empty').hidden = false;
-      state(`日终已由服务端受理，运行状态：${result.status || '已接受'}。这不代表已下单或已成交。`, result.status === 'SUCCEEDED' ? 'success' : 'loading', payload.request_id);
-      isSubmitting = false; updateAvailability(); submit.textContent = submit.dataset.submitLabel;
-    } catch (error) {
-      mapServerErrors(error); showFormError(error.message || '日终无法执行；请检查数据、版本与服务状态。');
-      state(error.message || '日终无法执行；数据不足、质量失败或前置版本不可用时不会生成结果。', error.status === 403 ? 'permission' : (error.status === 503 ? 'unavailable' : 'error'), error.payload?.request_id);
-      isSubmitting = false; updateAvailability(); submit.textContent = submit.dataset.submitLabel;
-    }
+    pendingValues = values;
+    appendSummary($('#daily-flow-confirmation-summary'), [
+      ['对象', '日终研究运行'], ['日期', values.as_of_date], ['数据批次 / 策略版本', `${values.data_batch_id} / ${values.strategy_version_id}`], ['成本 / 规则版本', `${values.cost_config_id} / ${values.rule_config_id}`], ['关键参数', `初始权益 ${values.initial_equity}；最大投资比例 ${values.max_investment_ratio}`], ['信息截点', values.information_cutoff_at],
+    ]);
+    setConfirmationMode(true); state('请核对摘要；点击“确认提交”后才会发送日终请求。', 'warning');
   });
+  $('#daily-flow-confirm').addEventListener('click', submitConfirmed);
   submit.disabled = true;
   loadBatches();
   loadStrategies();

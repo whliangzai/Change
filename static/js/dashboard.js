@@ -8,6 +8,7 @@
   const refresh = $('dashboard-refresh');
   const display = (value) => value == null || value === '' ? '--' : String(value);
   const request = async (path) => window.ResearchApp.readJson(await window.ResearchApp.apiFetch(path));
+  const statusLabel = (value, domain) => window.ResearchApp.statusLabel ? window.ResearchApp.statusLabel(value, domain) : String(value ?? '--');
 
   function showPairs(id, pairs) {
     const target = $(id);
@@ -25,11 +26,19 @@
 
   function showPanelState(id, kind, text, requestId) {
     const target = $(id);
+    const panel = target.closest ? target.closest('.panel') : null;
     if (!text) {
       target.hidden = true;
+      if (panel) panel.classList.remove('needs-action');
       return;
     }
     window.ResearchApp.renderState(target, kind, text, requestId);
+    if (panel) panel.classList.add('needs-action');
+  }
+
+  function hideLoading(name) {
+    const skeleton = $(`dashboard-${name}-loading`);
+    if (skeleton) skeleton.hidden = true;
   }
 
   function errorState(error, objectName) {
@@ -55,6 +64,7 @@
     results.forEach((result, index) => {
       const [name, objectName] = requests[index];
       if (result.status === 'rejected') {
+        hideLoading(name === 'backtests' ? 'backtests' : name);
         const [kind, text] = errorState(result.reason, objectName);
         const panel = name === 'backtests' ? 'backtest' : name;
         showPanelState(`dashboard-${panel}-availability`, kind, text, result.reason.payload?.request_id);
@@ -64,11 +74,12 @@
 
       const payload = result.value;
       if (name === 'data') {
+        hideLoading('data');
         const page = payload.data || {};
         const batch = Array.isArray(page.items) ? page.items[0] : null;
         showPairs('dashboard-data', [
           ['批次数', page.total],
-          ['最近状态', batch?.quality_status],
+          ['最近状态', statusLabel(batch?.quality_status, 'quality')],
           ['数据日期', batch?.data_date],
           ['数据来源', batch?.source_name],
           ['版本', batch?.version],
@@ -80,11 +91,12 @@
           payload.request_id,
         );
       } else if (name === 'backtests') {
+        hideLoading('backtests');
         const page = payload.data || {};
         const run = Array.isArray(page.items) ? page.items[0] : null;
         showPairs('dashboard-backtests', [
           ['运行数', page.total],
-          ['最近状态', run?.status],
+          ['最近状态', statusLabel(run?.status, 'job')],
           ['结果可用', run ? (run.result_usable ? '是' : '否') : '--'],
           ['数据批次', run?.data_batch_id],
           ['策略版本', run?.strategy_version_id],
@@ -96,14 +108,16 @@
           payload.request_id,
         );
       } else {
+        hideLoading('daily');
         const daily = payload.data || {};
+        if (daily.report_date) $('dashboard-daily-link').href = `/daily-reports/${encodeURIComponent(daily.report_date)}`;
         const unavailable = Array.isArray(daily.unavailable_reasons) ? daily.unavailable_reasons : [];
         const unusable = daily.result_usable === false || daily.status === 'UNAVAILABLE';
         showPairs('dashboard-daily', [
           ['报告日期', daily.report_date],
-          ['数据质量', daily.data_quality],
+          ['数据质量', statusLabel(daily.data_quality, 'quality')],
           ['市场开关', daily.market_switch],
-          ['风险状态', daily.risk_state],
+          ['风险状态', statusLabel(daily.risk_state, 'risk')],
           ['运行号', daily.run_id],
         ]);
         showPanelState(
@@ -114,6 +128,7 @@
         );
       }
     });
+    hideLoading('tasks');
 
     if (failures.length) {
       window.ResearchApp.renderState(state, 'error', `未能加载${failures.join('、')}；其余摘要已保留，可刷新重试。`);

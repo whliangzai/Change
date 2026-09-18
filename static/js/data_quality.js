@@ -83,19 +83,27 @@
 
   function renderPager(page, pageSize, total) {
     pager.replaceChildren();
-    if (!total) return;
     const pages = Math.max(1, Math.ceil(total / pageSize));
     const summary = document.createElement("span");
-    summary.textContent = `第 ${page}/${pages} 页，共 ${total} 条`;
+    const start = total ? ((page - 1) * pageSize) + 1 : 0;
+    const end = total ? Math.min(page * pageSize, total) : 0;
+    summary.textContent = `${start} – ${end} / ${total}`;
+    summary.className = "pagination-range";
     pager.append(summary);
-    [["上一页", page - 1], ["下一页", page + 1]].forEach(([label, next]) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = label;
-      button.disabled = next < 1 || next > pages;
-      button.addEventListener("click", () => loadBatches(next));
-      pager.append(button);
-    });
+    const controls = document.createElement("span");
+    controls.className = "pagination-controls";
+    const prev = document.createElement("button");
+    prev.type = "button"; prev.className = "pagination-button pagination-prev"; prev.setAttribute("aria-label", "上一页"); prev.textContent = "‹";
+    prev.disabled = page <= 1; prev.addEventListener("click", () => loadBatches(page - 1)); controls.append(prev);
+    const current = document.createElement("span"); current.className = "pagination-current"; current.textContent = String(page); pager.append(current);
+    controls.append(current);
+    const next = document.createElement("button");
+    next.type = "button"; next.className = "pagination-button pagination-next"; next.setAttribute("aria-label", "下一页"); next.textContent = "›";
+    next.disabled = page >= pages; next.addEventListener("click", () => loadBatches(page + 1)); controls.append(next);
+    pager.append(controls);
+    /* Keep the range visible even when the current filter has no rows. */
+    if (!total) pager.classList.add("pagination-empty");
+    else pager.classList.remove("pagination-empty");
   }
 
   function renderBatches(payload) {
@@ -116,8 +124,16 @@
     } else {
       items.forEach((item) => {
         const row = document.createElement("tr");
-        row.innerHTML = `<td><code>${esc(display(item.batch_id))}</code></td><td class="date-value">${esc(display(item.data_date))}</td><td>${esc(display(item.source_name))}</td><td>${esc(display(item.data_type))}</td><td>${esc(display(item.version))}</td><td class="numeric">${esc(formatNumber(item.record_count))}</td><td><span class="status status-${esc(String(item.quality_status || "unknown").toLowerCase())}">${esc(display(item.quality_status))}</span></td><td><button type="button" data-batch-id="${esc(item.batch_id)}">查看质量</button></td>`;
-        const button = row.querySelector("button");
+        const qualityLabel = { AVAILABLE: '可用', WARNING_AVAILABLE: '可用（有警告）', UNAVAILABLE: '不可用', VALIDATING: '校验中' }[item.quality_status] || display(item.quality_status);
+        const id = display(item.batch_id);
+        row.innerHTML = `<td><code title="${esc(id)}">${esc(id)}</code> <button type="button" class="copy-id" aria-label="复制完整批次 ID">复制</button></td><td class="date-value">${esc(display(item.data_date))}</td><td>${esc(display(item.source_name))}</td><td title="${esc(display(item.data_type))}">${item.data_type === 'DAILY_BAR' ? '日线' : esc(display(item.data_type))}</td><td>${esc(display(item.version))}</td><td class="numeric">${esc(formatNumber(item.record_count))}</td><td><span class="status status-${esc(String(item.quality_status || "unknown").toLowerCase())}">${esc(qualityLabel)}</span></td><td><button type="button" data-batch-id="${esc(item.batch_id)}">查看质量</button></td>`;
+        row.querySelector('.copy-id').addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(id);
+            renderState(state, 'success', '完整批次 ID 已复制。');
+          } catch (_) { renderState(state, 'error', `无法自动复制，请在质量明细中选择完整批次 ID：${id}`); }
+        });
+        const button = row.querySelector("[data-batch-id]");
         button.addEventListener("click", () => loadQuality(item.batch_id, button));
         tbody.append(row);
       });
@@ -159,15 +175,18 @@
   function renderIssues(summary) {
     const issuesList = $("#quality-issues");
     issuesList.replaceChildren();
-    const issues = summary.errors || summary.issues || summary.failures || summary.warnings || [];
-    const normalized = Array.isArray(issues)
-      ? issues
-      : Object.entries(issues).map(([code, message]) => ({ code, message }));
-    normalized.forEach((issue) => {
+    const normalized = [];
+    [['errors', '错误'], ['issues', '问题'], ['failures', '失败'], ['warnings', '警告']].forEach(([key, label]) => {
+      const values = summary[key];
+      if (values == null) return;
+      const issues = Array.isArray(values) ? values : typeof values === 'object'
+        ? Object.entries(values).map(([code, message]) => ({ code, message })) : [values];
+      issues.forEach((issue) => normalized.push({ label, issue }));
+    });
+    normalized.forEach(({ label, issue }) => {
       const item = document.createElement("li");
-      item.textContent = typeof issue === "string"
-        ? issue
-        : `${issue.code || "质量规则"}：${issue.message || issue.detail || JSON.stringify(issue)}`;
+      item.textContent = `${label}：${typeof issue === "string" ? issue : issue && typeof issue === 'object'
+        ? `${issue.code || "质量规则"}：${issue.message || issue.detail || JSON.stringify(issue)}` : String(issue)}`;
       issuesList.append(item);
     });
     if (!normalized.length) {
@@ -184,7 +203,6 @@
     detail.focus();
     $("#quality-summary").replaceChildren();
     $("#quality-issues").replaceChildren();
-    $("#quality-request-id").textContent = "";
     renderState($("#quality-state"), "loading", "正在加载质量明细…");
     try {
       const payload = await request(`/api/v1/data/batches/${encodeURIComponent(batchId)}/quality`);
@@ -193,7 +211,6 @@
       [["批次", data.batch_id], ["状态", data.quality_status], ["数据日期", data.data_date], ["记录数", formatNumber(data.record_count)], ["来源", data.source_name], ["版本", data.version]].forEach(([label, value]) => appendSummary(label, value));
       renderIssues(data.quality_summary || {});
       renderState($("#quality-state"), "success", "质量明细已加载。", payload?.request_id || "");
-      $("#quality-request-id").textContent = payload?.request_id ? `请求号：${payload.request_id}` : "";
     } catch (error) {
       if (requestNumber !== activeDetailRequest) return;
       renderFailure($("#quality-state"), error, () => loadQuality(batchId, detailTrigger), "该批次质量明细");
@@ -208,7 +225,9 @@
     filters.reset();
     loadBatches(1);
   });
+  $('#batch-page-size').addEventListener('change', () => loadBatches(1));
   $("#quality-close").addEventListener("click", () => {
+    activeDetailRequest += 1;
     detail.hidden = true;
     detailTrigger?.focus();
   });

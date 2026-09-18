@@ -33,7 +33,8 @@ def test_order_plan_workbench_exposes_review_evidence_and_safe_submission_states
     assert "不可用原因" in script.text
     assert "恢复路径" in script.text
     assert "Idempotency-Key" in script.text
-    assert "正在提交，不能重复提交" in script.text
+    assert "确认提交" in page.text
+    assert "请勿重复提交" in script.text
     assert "permission" in script.text
 
 
@@ -53,4 +54,4 @@ def test_strategy_workbench_exposes_draft_review_publish_boundaries_and_submissi
     assert "正在提交，不能重复提交" in script.text
     assert "服务端已受理" in script.text
     assert "permission" in script.text
-    assert page.text.count('class="primary"') == 1
+    assert page.text.count('class="primary"') == 2
