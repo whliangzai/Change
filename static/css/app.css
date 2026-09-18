@@ -357,8 +357,11 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .pagination-button:disabled { background: var(--surface-subtle); }
 
 /* A single filter field and its action should read as one compact row. */
-#execution-plan-filter { grid-template-columns: minmax(240px, 420px) auto; align-items: end; }
-#execution-plan-filter > .actions { align-self: end; }
+:is(#execution-plan-filter, #plan-filter) {
+  grid-template-columns: minmax(240px, 420px) auto;
+  align-items: end;
+}
+:is(#execution-plan-filter, #plan-filter) > .actions { align-self: end; }
 
 @media (min-width: 768px) and (max-width: 1279px) {
   .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -387,7 +390,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .definition-grid { grid-template-columns: 1fr; gap: 4px; }
   .definition-grid dd { margin-bottom: 8px; }
   .filters > label, .filters > button, .actions > button { min-width: min(100%, 180px); }
-  #execution-plan-filter { grid-template-columns: minmax(0, 1fr) auto; }
+  :is(#execution-plan-filter, #plan-filter) { grid-template-columns: minmax(0, 1fr) auto; }
   .login-page main { min-height: calc(100dvh - 49px); padding-top: 18px; }
   .login-panel { margin-top: 24px; padding: 18px; }
   .universe-page .pagination { justify-content: space-between; }
@@ -403,7 +406,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .page-heading h1 { font-size: 1.45rem; }
   .table-wrap { margin-inline: 0; }
   .actions > button, .actions > .button-link { width: 100%; }
-  #execution-plan-filter { grid-template-columns: 1fr; }
+  :is(#execution-plan-filter, #plan-filter) { grid-template-columns: 1fr; }
   .confirmation-summary .actions { display: grid; grid-template-columns: 1fr; }
   .confirmation-summary .actions .primary { margin-left: 0; }
 }

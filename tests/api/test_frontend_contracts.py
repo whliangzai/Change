@@ -17,6 +17,7 @@ def test_base_shell_uses_keyboard_safe_collapsible_navigation() -> None:
     assert 'id="main-nav"' in html
     assert 'data-open="false"' in html
     assert 'nav.querySelector("a")?.focus()' in html
+    assert '/static/css/app.css?v=layout-fix-20260918-3' in html
     assert "prototype-pages.css" not in html
     assert not (ROOT / "static" / "css" / "prototype-pages.css").exists()
 
@@ -68,7 +69,9 @@ def test_shared_layout_constrains_icons_pagination_and_single_field_actions() ->
     assert "flex: 0 0 1rem" in css
     assert ".pagination { flex-wrap: wrap; min-width: 0; background: transparent;" in css
     assert ".pagination-button, .pagination-current" in css
-    assert "#execution-plan-filter { grid-template-columns: minmax(240px, 420px) auto;" in css
+    assert ":is(#execution-plan-filter, #plan-filter)" in css
+    assert "grid-template-columns: minmax(240px, 420px) auto" in css
+    assert "align-items: end" in css
     assert 'controls.className = "pagination-controls"' in quality_js
     assert 'summary.className = "pagination-range"' in quality_js
 
