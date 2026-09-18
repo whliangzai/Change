@@ -34,3 +34,4 @@ data.db
 money-mvp.db
 .pytest-tmp*/
 tmp*/
+.superpowers/

@@ -63,5 +63,8 @@ def test_initial_migration_creates_versioned_market_schema(tmp_path: Path) -> No
     assert "uq_execution_record_plan_idempotency_key" in {
         item["name"] for item in inspector.get_indexes("execution_record")
     }
+    assert "uq_job_run_active_task_key" in {
+        item["name"] for item in inspector.get_indexes("job_run")
+    }
     assert Base.metadata.tables["data_batch"].c.available_at.type.timezone is True
     assert Base.metadata.tables["audit_event"].c.occurred_at.type.timezone is True

@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from app.core.config import ConfigurationError
+from app.core.config import ConfigurationError, _read_env_file
 from app.core.errors import DependencyError
 
 
@@ -23,7 +23,7 @@ class QueueSettings:
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> QueueSettings:
-        values = os.environ if environ is None else environ
+        values = _read_env_file() | dict(os.environ) if environ is None else environ
         try:
             port = int(values.get("REDIS_PORT", "6379"))
             db = int(values.get("REDIS_DB", "0"))
@@ -66,7 +66,10 @@ def redis_connection(settings: QueueSettings | None = None) -> Any:
         connection.ping()
         return connection
     except Exception as exc:
-        raise DependencyError("Redis is unavailable") from exc
+        # Include only the destination coordinates; never expose passwords or raw client errors.
+        raise DependencyError(
+            f"Redis is unavailable at {config.host}:{config.port}/{config.db}"
+        ) from exc
 
 
 def rq_queue(settings: QueueSettings | None = None) -> Any:
@@ -82,7 +85,9 @@ def rq_queue(settings: QueueSettings | None = None) -> Any:
     except DependencyError:
         raise
     except Exception as exc:
-        raise DependencyError("RQ queue is unavailable") from exc
+        raise DependencyError(
+            f"RQ queue is unavailable at {config.host}:{config.port}/{config.db}"
+        ) from exc
 
 
 def enqueue(
@@ -93,11 +98,17 @@ def enqueue(
     **kwargs: Any,
 ) -> Any:
     """Enqueue a deterministic job id; duplicate enqueue is rejected by RQ."""
-    queue = rq_queue(settings)
+    config = settings or QueueSettings.from_env()
+    queue = rq_queue(config)
     try:
         return queue.enqueue(function, *args, job_id=job_id, **kwargs)
     except Exception as exc:
-        raise DependencyError("Redis queue is unavailable") from exc
+        detail = str(exc).replace("\r", " ").replace("\n", " ").strip()[:160]
+        if config.password:
+            detail = detail.replace(config.password, "[REDACTED]")
+        raise DependencyError(
+            f"Redis queue is unavailable ({type(exc).__name__}): {detail}"
+        ) from exc
 
 
 __all__ = ["QueueSettings", "enqueue", "redis_connection", "rq_queue"]

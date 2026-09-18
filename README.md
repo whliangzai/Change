@@ -22,6 +22,11 @@ $env:AUTH_SECRET_KEY = "development-only-secret-change-me"
 $env:DATABASE_URL = "sqlite:///money-mvp.db"
 ```
 
+The application and worker also load an optional `.env` file from the repository root, so these
+values do not need to be entered repeatedly in PyCharm. Explicit process environment variables
+override `.env`; tests that pass explicit settings remain isolated from the local file. Keep
+`.env` uncommitted and do not add trailing semicolons to values.
+
 In `development`, a fresh local database bootstraps the documented `admin/admin` account with
 `USER`, `REVIEWER`, and `ADMIN` roles. This account is local-development-only and is never
 created in test, simulation, or production. Set `DEVELOPMENT_USERNAME` and
@@ -68,7 +73,8 @@ Use `python scripts/run_backtest.py --dry-run` to validate the configured backte
 creating a run. Authorized CSV/Parquet import remains supported; provider imports are only
 started through the protected ADMIN queue endpoints documented in `docs/runbooks/operations.md`.
 Never put a provider token in a task payload or URL. Tushare `full` import stays disabled until
-pilot evidence is reviewed and `TUSHARE_FULL_ENABLED=true` is explicitly enabled. The local
+pilot evidence is reviewed and `TUSHARE_FULL_ENABLED=true` is explicitly enabled; iFinD follows
+the same gate with `IFIND_FULL_ENABLED=true`. The local
 SQLite workflow is for development verification only. Production still requires PostgreSQL 16,
 Redis/RQ, deployed workers, and genuinely authorized market data.
 
@@ -77,10 +83,19 @@ Redis/RQ, deployed workers, and genuinely authorized market data.
 Calendar, file/provider data import, quality, daily report, backtest, and backup tasks receive
 application/domain services by dependency injection. A key is deterministic
 (`kind:business-date[:scope]`); provider imports use `data-import:<date>:ifind-<scope>` or
-`data-import:<date>:tushare-<scope>`. Completed keys replay the recorded value, while failures
-remain in `job_run` history and may be retried only when the exception is a dependency failure.
-Data and rule errors are surfaced without automatic retry. Audit events are append-only and
-contain summaries, never credentials.
+`data-import:<date>:tushare-<scope>`. Provider submissions first persist a `queued` row and the
+worker claims it as `running` before calling the provider. The admin APIs expose `QUEUED`,
+`RUNNING`, `SUCCEEDED`, and `FAILED`, with polling-safe job IDs and batch/quality summaries.
+Completed keys replay the recorded value, while failures remain as append-only `job_run` attempt
+history and may be retried only when the exception is a dependency failure. Configure `APP_ENV`,
+`DATABASE_URL`, `AUTH_SECRET_KEY`, Redis/RQ, and a running worker explicitly; missing
+configuration fails closed and the page reports readiness or queue unavailability without
+guessing a substitute provider. Data and rule errors are surfaced without automatic retry.
+An active-task partial unique index permits only one `queued`/`running` row for a task key. If a
+process dies after the queued row is committed but before Redis enqueue, an ADMIN can recover the
+same task after `JOB_QUEUE_STALE_AFTER_SECONDS` (default 300) through the management page; this
+keeps the original job ID and task key and records the recovery audit event. Audit events are
+append-only and contain summaries, never credentials.
 
 ## Storage and backup
 
@@ -108,10 +123,10 @@ P0 is data loss, credential exposure, or an unsafe execution boundary: stop affe
 
 ## Verification snapshot (2026-09-09)
 
-The full local suite passes when pytest uses a workspace-owned base directory: `230 passed, 64 warnings`. The plain command may hit a Windows ACL error while scanning the system pytest temp directory; that is an environment issue, not a test assertion failure.
+The full local suite passes when pytest uses a workspace-owned base directory: `238 passed, 67 warnings`. The plain command may hit a Windows ACL error while scanning the system pytest temp directory; that is an environment issue, not a test assertion failure.
 
-Ruff lint and strict mypy pass (`82` app files). Ruff format check currently reports 12 existing/provider-integration files that need formatting; no bulk formatting was applied to the dirty worktree. The persistence-runtime review suite is included in the full test run. Alembic `upgrade head` and `check` pass on a fresh isolated SQLite verification database through revisions `0001`–`0003`; the current provider increment stores provenance in existing batch metadata and does not yet add a provider-specific migration. Static Compose configuration passes with required temporary values through legacy `docker-compose`; the requested `docker compose` subcommand is unavailable and Docker Desktop's daemon is unavailable, so container deployment and PostgreSQL 16/Redis 7/RQ integration remain unverified. The current `.env` has Redis settings but no `DATABASE_URL`; no broker connectivity or order-submit path exists.
+Ruff lint and strict mypy pass (`82` app files). Ruff format check currently reports 11 existing/provider-integration files that need formatting; no bulk formatting was applied to the dirty worktree. The persistence-runtime review suite is included in the full test run. Alembic `upgrade head` and `check` pass on a fresh isolated SQLite verification database through revisions `0001`–`0004`; the provider job lifecycle reuses `job_run` and adds no provider-specific table. Static Compose configuration passes with required temporary values through legacy `docker-compose`; the requested `docker compose` subcommand is unavailable and Docker Desktop's daemon is unavailable, so container deployment and PostgreSQL 16/Redis 7/RQ integration remain unverified. The current `.env` has Redis settings but no `DATABASE_URL`; no broker connectivity or order-submit path exists.
 
 The loopback smoke returned `/health` HTTP 200 and `AUTH_REQUIRED` HTTP 401 for unauthenticated data, backtest, and daily-report requests. Readiness timed out when Redis was unavailable, so readiness and container health remain blocked. The only production-tree placeholder hit is the unused `app/api/audit.py`; the mounted audit API is `app/api/v1/admin.py`. `FakeRedis` and `FakeQueue` are test doubles only.
 
-The 200,000-bar performance run recorded `elapsed_seconds=4.842594` and `peak_bytes=242022348` (about 230.8 MiB, tracemalloc). Its input `bars.csv` SHA-256 is `f73ea72f8bcf44dd1472aea4caf7a95647110b7854a608bc68dc0352d6ac4566`, `run_id=run_39b710280504`, and `content_hash=e66de388329e22d4f753d58349bbb50823e59e1162041f43e2fd37aaf069449a`. This records a measured run only; it is not evidence that the five-minute target is met. Isolated SQLite recovery readiness verified the `0001` to `0003` migration chain, two manifest file hashes, and ledger reconciliation, but `run_reproducibility=NOT_CHECKED` and `ready=false`; no real restore overwrite was performed.
+The 200,000-bar performance run recorded `elapsed_seconds=4.842594` and `peak_bytes=242022348` (about 230.8 MiB, tracemalloc). Its input `bars.csv` SHA-256 is `f73ea72f8bcf44dd1472aea4caf7a95647110b7854a608bc68dc0352d6ac4566`, `run_id=run_39b710280504`, and `content_hash=e66de388329e22d4f753d58349bbb50823e59e1162041f43e2fd37aaf069449a`. This records a measured run only; it is not evidence that the five-minute target is met. Isolated SQLite recovery readiness verified the `0001` to `0004` migration chain, two manifest file hashes, and ledger reconciliation, but `run_reproducibility=NOT_CHECKED` and `ready=false`; no real restore overwrite was performed.

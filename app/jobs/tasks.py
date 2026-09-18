@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from datetime import date
-from typing import Any
+from typing import Any, NoReturn
 
 from app.core.contracts import AuditWriter
 from app.core.errors import DependencyError
@@ -20,6 +20,7 @@ def _run(
     run_store: JobRunStore | None,
     audit_writer: AuditWriter | None,
     scope: str | None = None,
+    phase: str = "execute",
     service_kwargs: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> JobResult:
@@ -32,6 +33,7 @@ def _run(
         run_store=run_store,
         audit_writer=audit_writer,
         scope=scope,
+        phase=phase,
     )
 
 
@@ -85,10 +87,37 @@ def import_ifind_data(
         business_date,
         operation,
         scope=f"ifind-{scope}",
+        phase="provider-import",
         service_kwargs={"scope": scope},
         run_store=run_store,
         audit_writer=audit_writer,
     )
+
+
+def _record_provider_failure(
+    business_date: date,
+    provider: str,
+    scope: str,
+    error: BaseException,
+    *,
+    run_store: JobRunStore,
+    audit_writer: AuditWriter,
+) -> NoReturn:
+    """Move a queued provider job through running to failed before re-raising."""
+
+    def fail() -> None:
+        raise error
+
+    run_idempotent_task(
+        "data-import",
+        business_date,
+        fail,
+        scope=f"{provider}-{scope}",
+        phase="provider-import",
+        run_store=run_store,
+        audit_writer=audit_writer,
+    )
+    raise error
 
 
 def run_ifind_import(business_date: date | str, scope: str) -> JobResult:
@@ -96,7 +125,7 @@ def run_ifind_import(business_date: date | str, scope: str) -> JobResult:
     if scope not in {"pilot", "full"}:
         raise ValueError("scope must be pilot or full")
     from app.application.ifind_ingestion import IFindIngestionService
-    from app.core.config import load_settings
+    from app.core.config import ConfigurationError, load_settings
     from app.infrastructure.db.session import make_engine
     from app.infrastructure.ifind import IFindHttpClient, IFindRawArchive
     from app.infrastructure.repositories.research import SqlAlchemyResearchRepository
@@ -105,18 +134,41 @@ def run_ifind_import(business_date: date | str, scope: str) -> JobResult:
         SqlAlchemyJobRunStore,
     )
 
+    normalized_date = date.fromisoformat(str(business_date)[:10])
     settings = load_settings()
-    if not settings.ifind_enabled:
-        raise DependencyError("iFinD import is disabled")
-    if IFindHttpClient is None or IFindRawArchive is None:
-        raise DependencyError("iFinD HTTP dependencies are not installed")
-
     engine = make_engine(settings.database_url)
     repository = SqlAlchemyResearchRepository.from_engine(
         engine, create_schema=settings.app_env == "development"
     )
     run_store = SqlAlchemyJobRunStore.from_engine(engine)
     audit_writer = SqlAlchemyAuditWriter.from_engine(engine)
+    if not settings.ifind_enabled:
+        _record_provider_failure(
+            normalized_date,
+            "ifind",
+            scope,
+            ConfigurationError("iFinD import is disabled"),
+            run_store=run_store,
+            audit_writer=audit_writer,
+        )
+    if scope == "full" and not settings.ifind_full_enabled:
+        _record_provider_failure(
+            normalized_date,
+            "ifind",
+            scope,
+            ConfigurationError("iFinD full import is disabled pending pilot acceptance"),
+            run_store=run_store,
+            audit_writer=audit_writer,
+        )
+    if IFindHttpClient is None or IFindRawArchive is None:
+        _record_provider_failure(
+            normalized_date,
+            "ifind",
+            scope,
+            DependencyError("iFinD HTTP dependencies are not installed"),
+            run_store=run_store,
+            audit_writer=audit_writer,
+        )
     data_root = os.environ.get("DATA_ROOT", "data")
     archive = IFindRawArchive(data_root, secret_values=(settings.ifind_refresh_token,))
     client = IFindHttpClient(
@@ -134,7 +186,7 @@ def run_ifind_import(business_date: date | str, scope: str) -> JobResult:
     )
     try:
         return import_ifind_data(
-            date.fromisoformat(str(business_date)[:10]),
+            normalized_date,
             service.import_business_date,
             scope=scope,
             run_store=run_store,
@@ -161,6 +213,7 @@ def import_tushare_data(
         business_date,
         operation,
         scope=f"tushare-{scope}",
+        phase="provider-import",
         service_kwargs={"scope": scope},
         run_store=run_store,
         audit_writer=audit_writer,
@@ -172,7 +225,7 @@ def run_tushare_import(business_date: date | str, scope: str) -> JobResult:
     if scope not in {"pilot", "full"}:
         raise ValueError("scope must be pilot or full")
     from app.application.tushare_ingestion import TushareIngestionService
-    from app.core.config import load_settings
+    from app.core.config import ConfigurationError, load_settings
     from app.infrastructure.akshare import AKShareValidationClient
     from app.infrastructure.db.session import make_engine
     from app.infrastructure.providers import RawResponseArchive
@@ -180,11 +233,8 @@ def run_tushare_import(business_date: date | str, scope: str) -> JobResult:
     from app.infrastructure.repositories.runtime import SqlAlchemyAuditWriter, SqlAlchemyJobRunStore
     from app.infrastructure.tushare import TushareHttpClient
 
+    normalized_date = date.fromisoformat(str(business_date)[:10])
     settings = load_settings()
-    if not settings.tushare_enabled:
-        raise DependencyError("Tushare import is disabled")
-    if scope == "full" and not settings.tushare_full_enabled:
-        raise DependencyError("Tushare full import is disabled pending pilot acceptance")
     engine = make_engine(settings.database_url)
     repository = SqlAlchemyResearchRepository.from_engine(
         engine, create_schema=settings.app_env == "development"
@@ -193,6 +243,24 @@ def run_tushare_import(business_date: date | str, scope: str) -> JobResult:
         SqlAlchemyJobRunStore.from_engine(engine),
         SqlAlchemyAuditWriter.from_engine(engine),
     )
+    if not settings.tushare_enabled:
+        _record_provider_failure(
+            normalized_date,
+            "tushare",
+            scope,
+            ConfigurationError("Tushare import is disabled"),
+            run_store=run_store,
+            audit_writer=audit_writer,
+        )
+    if scope == "full" and not settings.tushare_full_enabled:
+        _record_provider_failure(
+            normalized_date,
+            "tushare",
+            scope,
+            ConfigurationError("Tushare full import is disabled pending pilot acceptance"),
+            run_store=run_store,
+            audit_writer=audit_writer,
+        )
     data_root = os.environ.get("DATA_ROOT", "data")
     archive = RawResponseArchive(data_root, secret_values=(settings.tushare_token,))
     client = TushareHttpClient(
@@ -221,7 +289,7 @@ def run_tushare_import(business_date: date | str, scope: str) -> JobResult:
     )
     try:
         return import_tushare_data(
-            date.fromisoformat(str(business_date)[:10]),
+            normalized_date,
             service,
             scope=scope,
             run_store=run_store,

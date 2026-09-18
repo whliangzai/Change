@@ -58,6 +58,24 @@ def test_backtest_script_reaches_configuration_gate_when_run_directly(
     assert "ModuleNotFoundError" not in completed.stderr
 
 
+def test_worker_script_runs_directly_from_repository_root(monkeypatch, tmp_path) -> None:
+    fake_rq = tmp_path / "rq.cmd"
+    fake_rq.write_text("@echo off\nexit /b 0\n", encoding="utf-8")
+    monkeypatch.setenv("RQ_EXECUTABLE", str(fake_rq))
+
+    completed = subprocess.run(
+        [sys.executable, "scripts/run_worker.py"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_direct_script_environment(),
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "ModuleNotFoundError" not in completed.stderr
+
+
 def test_readme_documents_direct_commands_and_synthetic_sample() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 

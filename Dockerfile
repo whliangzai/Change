@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir \
     "fastapi>=0.115,<1.0" "uvicorn>=0.30,<1.0" "argon2-cffi>=23.1,<24.0" \
     "PyJWT>=2.9,<3.0" "redis>=5,<6" "rq>=2,<3" "pyarrow>=17,<20" \
     "pandas>=2.2,<3" "SQLAlchemy>=2.0,<3" "alembic>=1.13,<2" \
-    "psycopg[binary]>=3.2,<4" "jinja2>=3.1,<4" "pydantic-settings>=2.6,<3" \
+    "psycopg[binary]>=3.2,<4" "jinja2>=3.1,<4" "pydantic-settings>=2.6,<3" "python-dotenv>=1.0,<2" \
     "httpx>=0.27,<1.0" "akshare>=1.16,<2.0"
 COPY app ./app
 COPY scripts ./scripts

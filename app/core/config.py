@@ -5,13 +5,27 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from urllib.parse import urlparse
 
+from dotenv import dotenv_values
 from sqlalchemy.engine import make_url
 
 
 class ConfigurationError(ValueError):
     """Raised when environment configuration violates a safety invariant."""
+
+
+_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+
+
+def _read_env_file() -> dict[str, str]:
+    """Read the optional project-root .env without mutating process environment."""
+    return {
+        key: value
+        for key, value in dotenv_values(_ENV_FILE).items()
+        if key and value is not None
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,10 +44,12 @@ class Settings:
     partial_fill_mode: str
     database_url: str
     database_backend: str = "sqlite"
+    job_queue_stale_after_seconds: int = 300
     development_username: str | None = None
     development_password: str | None = None
     # iFinD credentials are deployment secrets.  Keep the token out of repr/log output.
     ifind_enabled: bool = False
+    ifind_full_enabled: bool = False
     ifind_base_url: str = "https://quantapi.51ifind.com"
     ifind_refresh_token: str = field(default="", repr=False)
     ifind_daily_run_at: str = "18:30"
@@ -67,7 +83,9 @@ _DEFAULTS: dict[str, str] = {
     "EXECUTION_PRICE_MODE": "NEXT_OPEN_ADJUSTED",
     "PARTIAL_FILL_MODE": "FULL_OR_NONE",
     "DATABASE_URL": "sqlite:///./money-mvp.db",
+    "JOB_QUEUE_STALE_AFTER_SECONDS": "300",
     "IFIND_ENABLED": "false",
+    "IFIND_FULL_ENABLED": "false",
     "IFIND_BASE_URL": "https://quantapi.51ifind.com",
     "IFIND_DAILY_RUN_AT": "18:30",
     "IFIND_MAX_CODES_PER_REQUEST": "200",
@@ -119,8 +137,12 @@ def _daily_time(values: Mapping[str, str], key: str) -> str:
 
 
 def load_settings(overrides: Mapping[str, str] | None = None) -> Settings:
-    """Load settings from the process environment with explicit test overrides."""
-    supplied_values = dict(os.environ) | dict(overrides or {})
+    """Load settings from .env, process environment, and explicit overrides.
+
+    Precedence is explicit overrides > process environment > project .env.
+    """
+    file_values = _read_env_file() if overrides is None else {}
+    supplied_values = file_values | dict(os.environ) | dict(overrides or {})
     values = _DEFAULTS | supplied_values
     app_env = supplied_values.get("APP_ENV", "").lower()
     if not app_env:
@@ -129,7 +151,7 @@ def load_settings(overrides: Mapping[str, str] | None = None) -> Settings:
     if not secret:
         raise ConfigurationError("AUTH_SECRET_KEY must be configured")
     if app_env not in {"development", "test"} and (
-        len(secret) < 32 or secret == "development-only-secret-change-me"
+            len(secret) < 32 or secret == "development-only-secret-change-me"
     ):
         raise ConfigurationError(
             "AUTH_SECRET_KEY must be at least 32 characters outside development"
@@ -160,11 +182,18 @@ def load_settings(overrides: Mapping[str, str] | None = None) -> Settings:
         raise ConfigurationError("MAX_INVESTMENT_RATIO must be in (0, 1]")
     if initial_equity <= Decimal("0") or max_positions < 1:
         raise ConfigurationError("DEFAULT_INITIAL_EQUITY and MAX_POSITIONS must be positive")
+    try:
+        job_queue_stale_after_seconds = int(values["JOB_QUEUE_STALE_AFTER_SECONDS"])
+    except (KeyError, ValueError):
+        raise ConfigurationError("JOB_QUEUE_STALE_AFTER_SECONDS must be an integer") from None
+    if not 30 <= job_queue_stale_after_seconds <= 86_400:
+        raise ConfigurationError("JOB_QUEUE_STALE_AFTER_SECONDS must be between 30 and 86400")
     if values["EXECUTION_PRICE_MODE"] != "NEXT_OPEN_ADJUSTED":
         raise ConfigurationError("EXECUTION_PRICE_MODE must be NEXT_OPEN_ADJUSTED")
     if values["PARTIAL_FILL_MODE"] != "FULL_OR_NONE":
         raise ConfigurationError("PARTIAL_FILL_MODE must be FULL_OR_NONE")
     ifind_enabled = _boolean(values, "IFIND_ENABLED")
+    ifind_full_enabled = _boolean(values, "IFIND_FULL_ENABLED")
     ifind_base_url = values.get("IFIND_BASE_URL", "").strip().rstrip("/")
     parsed_ifind_url = urlparse(ifind_base_url)
     if parsed_ifind_url.scheme != "https" or parsed_ifind_url.hostname != "quantapi.51ifind.com":
@@ -240,6 +269,7 @@ def load_settings(overrides: Mapping[str, str] | None = None) -> Settings:
         partial_fill_mode=values["PARTIAL_FILL_MODE"],
         database_url=database_url,
         database_backend=database_backend,
+        job_queue_stale_after_seconds=job_queue_stale_after_seconds,
         development_username=(
             values.get("DEVELOPMENT_USERNAME", "").strip() or "admin"
             if app_env == "development"
@@ -249,6 +279,7 @@ def load_settings(overrides: Mapping[str, str] | None = None) -> Settings:
             values.get("DEVELOPMENT_PASSWORD", "") or "admin" if app_env == "development" else None
         ),
         ifind_enabled=ifind_enabled,
+        ifind_full_enabled=ifind_full_enabled,
         ifind_base_url=ifind_base_url,
         ifind_refresh_token=ifind_refresh_token,
         ifind_daily_run_at=ifind_daily_run_at,

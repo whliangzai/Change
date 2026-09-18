@@ -854,6 +854,7 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
             if strategy is None or strategy.created_by != owner_id:
                 return None
             return {
+                **self._strategy_record(strategy),
                 "strategy_version_id": strategy_id,
                 "base_version": None,
                 "changes": strategy.parameters,

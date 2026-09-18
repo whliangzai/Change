@@ -20,6 +20,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -433,7 +434,13 @@ class DailyReport(UUIDPrimaryKeyMixin, Base):
 class JobRun(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "job_run"
     __table_args__ = (
-        UniqueConstraint("job_code", "idempotency_key", name="uq_job_run_job_idempotency"),
+        Index(
+            "uq_job_run_active_task_key",
+            "idempotency_key",
+            unique=True,
+            sqlite_where=text("status IN ('queued', 'running')"),
+            postgresql_where=text("status IN ('queued', 'running')"),
+        ),
     )
     job_code: Mapped[str] = mapped_column(String(32), nullable=False)
     business_date: Mapped[date] = mapped_column(Date, nullable=False)

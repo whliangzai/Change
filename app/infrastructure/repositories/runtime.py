@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import Engine, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.contracts import AuditEvent, AuditWriter, IdempotencyRequest, IdempotencyResult
@@ -17,7 +18,7 @@ from app.core.errors import IdempotencyConflictError, StateConflictError
 from app.core.security import LocalAccount, Role
 from app.infrastructure.db import models
 from app.infrastructure.db.session import make_session_factory
-from app.jobs.idempotency import JobRunRecord, JobRunStore
+from app.jobs.idempotency import JobRunRecord, JobRunStore, provider_from_task_key
 
 
 class SqlAlchemyIdempotencyStore:
@@ -297,17 +298,192 @@ class SqlAlchemyJobRunStore(JobRunStore):
     def latest(self, idempotency_key: str) -> JobRunRecord | None:
         with self._session() as session:
             record = session.scalar(
-                select(models.JobRun).where(models.JobRun.idempotency_key == idempotency_key)
+                select(models.JobRun)
+                .where(models.JobRun.idempotency_key == idempotency_key)
+                .order_by(models.JobRun.started_at.desc(), models.JobRun.id.desc())
             )
             return self._record(record) if record is not None else None
 
-    def append(self, record: JobRunRecord) -> None:
+    def get(self, run_id: str) -> JobRunRecord | None:
+        try:
+            identifier = UUID(run_id)
+        except (ValueError, AttributeError):
+            return None
         with self._session() as session:
-            existing = session.scalar(
-                select(models.JobRun).where(models.JobRun.idempotency_key == record.idempotency_key)
+            record = session.get(models.JobRun, identifier)
+            return self._record(record) if record is not None else None
+
+    def page(
+        self,
+        page: int,
+        page_size: int,
+        *,
+        provider: str | None = None,
+        status: str | None = None,
+        business_date: date | None = None,
+    ) -> tuple[list[JobRunRecord], int]:
+        filters: list[Any] = []
+        if status:
+            filters.append(models.JobRun.status == status.lower())
+        if business_date is not None:
+            filters.append(models.JobRun.business_date == business_date)
+        if provider:
+            filters.append(
+                models.JobRun.idempotency_key.like(f"data-import:%:{provider.lower()}-%")
             )
-            if existing is not None:
-                if existing.status == "failed":
+        with self._session() as session:
+            total = int(
+                session.scalar(select(func.count()).select_from(models.JobRun).where(*filters)) or 0
+            )
+            rows = session.scalars(
+                select(models.JobRun)
+                .where(*filters)
+                .order_by(models.JobRun.started_at.desc(), models.JobRun.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            ).all()
+            return [self._record(row) for row in rows], total
+
+    def reserve_queued(
+        self,
+        job_kind: str,
+        business_date: date,
+        idempotency_key: str,
+        *,
+        phase: str,
+        value: Any = None,
+        retry_failed: bool = False,
+    ) -> JobRunRecord:
+        return self.reserve_queued_owned(
+            job_kind,
+            business_date,
+            idempotency_key,
+            phase=phase,
+            value=value,
+            retry_failed=retry_failed,
+        )[0]
+
+    def reserve_queued_owned(
+        self,
+        job_kind: str,
+        business_date: date,
+        idempotency_key: str,
+        *,
+        phase: str,
+        value: Any = None,
+        retry_failed: bool = False,
+    ) -> tuple[JobRunRecord, bool]:
+        try:
+            with self._session() as session:
+                existing = self._latest_model(session, idempotency_key)
+                if existing is not None and (not retry_failed or existing.status != "failed"):
+                    return self._record(existing), False
+                if existing is not None and existing.status != "failed":
+                    raise StateConflictError("Only failed jobs can be queued for retry")
+                record = JobRunRecord(
+                    run_id=str(uuid4()),
+                    idempotency_key=idempotency_key,
+                    job_kind=job_kind,
+                    business_date=business_date,
+                    run_number=(existing.run_number or 1) + 1 if existing else 1,
+                    attempt=(existing.attempt + 1) if existing else 1,
+                    phase=phase,
+                    status="queued",
+                    value=value,
+                    started_at=datetime.now(UTC),
+                )
+                session.add(self._model(record))
+                session.flush()
+                return record, True
+        except IntegrityError:
+            # Another request won the active-task-key reservation between its
+            # SELECT and INSERT. Re-read the winner and let it own enqueueing.
+            existing = self.latest(idempotency_key)
+            if existing is None:
+                raise
+            return existing, False
+
+    def claim_queued(self, idempotency_key: str, *, phase: str) -> JobRunRecord | None:
+        with self._session() as session:
+            existing = self._latest_model(session, idempotency_key)
+            if existing is None:
+                return None
+            if existing.status == "running":
+                raise StateConflictError("A matching job is already running")
+            if existing.status != "queued":
+                return None
+            result = session.execute(
+                update(models.JobRun)
+                .where(models.JobRun.id == existing.id, models.JobRun.status == "queued")
+                .values(
+                    status="running",
+                    phase=phase,
+                    started_at=datetime.now(UTC),
+                    error_summary=None,
+                    ended_at=None,
+                )
+            )
+            if cast(Any, result).rowcount != 1:
+                current = session.get(models.JobRun, existing.id)
+                if current is not None and current.status == "running":
+                    raise StateConflictError("A matching job is already running")
+                return None
+            current = session.get(models.JobRun, existing.id)
+            return self._record(current) if current is not None else None
+
+    def claim_queued_for_requeue(
+        self, run_id: str, *, expected_started_at: datetime
+    ) -> tuple[JobRunRecord, bool]:
+        identifier = UUID(run_id)
+        with self._session() as session:
+            existing = session.get(models.JobRun, identifier)
+            if existing is None:
+                raise StateConflictError("The requested queued job no longer exists")
+            if existing.status != "queued":
+                return self._record(existing), False
+            result = session.execute(
+                update(models.JobRun)
+                .where(
+                    models.JobRun.id == identifier,
+                    models.JobRun.status == "queued",
+                    models.JobRun.started_at == expected_started_at,
+                )
+                .values(
+                    phase="requeueing",
+                    started_at=datetime.now(UTC),
+                    error_summary=None,
+                    ended_at=None,
+                )
+            )
+            current = session.get(models.JobRun, identifier)
+            if cast(Any, result).rowcount != 1 or current is None:
+                if current is None:
+                    raise StateConflictError("The requested queued job no longer exists")
+                return self._record(current), False
+            return self._record(current), True
+
+    def mark_queued(self, run_id: str, *, phase: str) -> JobRunRecord | None:
+        identifier = UUID(run_id)
+        with self._session() as session:
+            session.execute(
+                update(models.JobRun)
+                .where(models.JobRun.id == identifier, models.JobRun.status == "queued")
+                .values(phase=phase)
+            )
+            record = session.get(models.JobRun, identifier)
+            return self._record(record) if record is not None else None
+
+    def append(self, record: JobRunRecord) -> None:
+        try:
+            with self._session() as session:
+                existing = self._latest_model(session, record.idempotency_key)
+                if (
+                    existing is not None
+                    and existing.status == "failed"
+                    and provider_from_task_key(record.idempotency_key) is None
+                ):
+                    # Preserve the pre-provider behavior for legacy jobs. Provider
+                    # imports are append-only so every retry remains queryable.
                     existing.id = UUID(record.run_id)
                     existing.status = record.status
                     existing.run_number = record.run_number
@@ -318,8 +494,10 @@ class SqlAlchemyJobRunStore(JobRunStore):
                     existing.started_at = record.started_at
                     existing.ended_at = record.finished_at
                     return
-                raise StateConflictError("A matching durable job is already recorded")
-            session.add(self._model(record))
+                session.add(self._model(record))
+                session.flush()
+        except IntegrityError as exc:
+            raise StateConflictError("A matching queued or running job already exists") from exc
 
     def replace(self, record: JobRunRecord) -> None:
         identifier = UUID(record.run_id)
@@ -333,7 +511,19 @@ class SqlAlchemyJobRunStore(JobRunStore):
             stored.phase = record.phase
             stored.value = cast(Any, self._json_value(record.value))
             stored.error_summary = record.error_summary
+            stored.started_at = record.started_at
             stored.ended_at = record.finished_at
+
+    @staticmethod
+    def _latest_model(session: Session, idempotency_key: str, *, for_update: bool = False) -> Any:
+        statement = (
+            select(models.JobRun)
+            .where(models.JobRun.idempotency_key == idempotency_key)
+            .order_by(models.JobRun.started_at.desc(), models.JobRun.id.desc())
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return session.scalar(statement)
 
     @staticmethod
     def _model(record: JobRunRecord) -> models.JobRun:
@@ -448,11 +638,24 @@ class SqlAlchemyAuditWriter(AuditWriter):
                         "object_id": event.object_id,
                         "request_id": event.request_id,
                         "result": event.result,
+                        "task_key": self._audit_summary(event.after_digest).get("task_key"),
+                        "job_id": self._audit_summary(event.after_digest).get("job_id")
+                        or event.object_id,
                     }
                     for event in events
                 ],
                 total,
             )
+
+    @staticmethod
+    def _audit_summary(value: str | None) -> dict[str, Any]:
+        if not value:
+            return {}
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
 
 
 __all__ = [

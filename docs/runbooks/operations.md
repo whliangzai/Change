@@ -33,7 +33,13 @@ pilot field, license, hash, or quality evidence is incomplete.
 ## Tushare primary import and AKShare validation
 
 Tushare is the current primary HTTP source; the existing iFinD path remains available for
-compatibility. Configure `TUSHARE_ENABLED=true` and
+compatibility. Configure `APP_ENV`, `DATABASE_URL`, `AUTH_SECRET_KEY`, Redis/RQ, and a running
+worker explicitly. The service fails closed when required runtime configuration is missing;
+`/data-import` shows readiness/queue unavailability and keeps the task ID for manual recovery.
+`JOB_QUEUE_STALE_AFTER_SECONDS` defaults to 300 seconds. It is the minimum age before an
+ADMIN may recover a queued task whose database reservation succeeded but whose Redis enqueue
+did not complete.
+Configure `TUSHARE_ENABLED=true` and
 provide `TUSHARE_TOKEN` only through the deployment secret environment; never pass
 it in a task payload, URL, or audit record. The scheduler calls
 `POST /api/v1/admin/data-imports/tushare/{business_date}?scope=pilot` at 18:30
@@ -46,7 +52,9 @@ use `scope=full` until an administrator has reviewed a continuous pilot window a
 all calendar, OHLCV/amount, adjustment-factor, dated ST/suspension, listing/delisting,
 and dated Shenwan industry evidence. Full backfill is one business date at a time
 from 2016-01-01 through the last completed trading date.
-Set `TUSHARE_FULL_ENABLED=true` only after that approval; it defaults to false.
+Set `TUSHARE_FULL_ENABLED=true` only after that approval; it defaults to false. iFinD uses the
+same workflow and `IFIND_FULL_ENABLED=false` by default: enable it only after its pilot evidence
+has been reviewed. The page never accepts or displays either provider credential.
 
 AKShare is validation-only. It archives calendar and unadjusted OHLCV evidence and
 creates `WARNING` details for missing data, connectivity failures, or configured
@@ -56,7 +64,18 @@ is `UNAVAILABLE` and blocks downstream publication.
 
 ## Failure handling
 
-Dependency failures may retry using the same idempotency key. Data-unavailable, validation, rule, and state errors do not receive blind retries. A repeated key replays a completed result and must not duplicate plans, fees, fills, or report files. Inspect `job_run` for business date, run number, attempt, stage, and redacted error summary.
+Provider submission creates a durable `queued` job before Redis/RQ enqueue. Workers claim
+`queued -> running`; enqueue failures become `failed` and return HTTP 503. Dependency failures
+may retry using the original task key; data-unavailable, validation, rule, and permission/state
+errors do not receive blind retries. A repeated key replays a completed result and must not
+duplicate plans, fees, fills, or report files. Inspect `GET /api/v1/jobs` or `job_run` for provider,
+scope, business date, run number, attempt, phase, batch/quality status, and redacted error summary.
+The active-task partial unique index allows only one `queued`/`running` row per task key. The
+admin page preserves the failed attempt and exposes dependency retry only when the persisted
+error is retryable. A stale `queued` row can be recovered through the same admin action; recovery
+keeps the original job ID and task key, re-enqueues it once, and records the management audit
+event. If the worker has already claimed it, the conditional state transition prevents a second
+recovery enqueue.
 
 P0: stop the affected boundary, preserve audit/log evidence, revoke exposed credentials, and escalate. P1: pause daily publication/manual confirmation, fix the dependency or data batch, then retry the same key. P2: preserve the run and schedule a normal correction. Automatic fund movement, trade execution, order repair, and risk-state recovery are prohibited.
 

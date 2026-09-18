@@ -265,7 +265,10 @@ class TushareIngestionService:
         except DependencyError:
             raise
         except Exception as exc:
-            raise TushareIngestionError(f"Tushare {dataset} fetch failed") from exc
+            detail = str(exc).replace("\r", " ").replace("\n", " ").strip()[:240]
+            raise TushareIngestionError(
+                f"Tushare {dataset} fetch failed ({type(exc).__name__}): {detail}"
+            ) from exc
         return [dict(row) for row in (result or []) if isinstance(row, Mapping)]
 
     @classmethod
