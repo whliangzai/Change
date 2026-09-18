@@ -202,6 +202,7 @@ h3 { font-size: .98rem; }
 .form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: 12px 16px; }
 .filters, .actions { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
 .form-grid label, .filters label, .login-field { display: grid; gap: 5px; min-width: 0; color: var(--ink); font-size: 13px; font-weight: 600; }
+.backtest-form-grid > label { grid-template-rows: auto var(--control-height) auto; align-content: start; }
 .form-grid label .muted, .filters label .muted { font-weight: 400; }
 .form-grid input, .filters input, .filters select, .form-grid select, .form-grid textarea, .login-field input, .list-footer select { width: 100%; min-height: var(--control-height); padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: var(--control-radius); background: var(--surface); color: var(--ink); }
 textarea { min-height: 96px; resize: vertical; }
@@ -232,7 +233,6 @@ pre { max-width: 100%; overflow: auto; margin: 0; padding: 12px; border: 1px sol
 .button-quiet:hover:not(:disabled) { border-color: var(--line); background: var(--surface-subtle); color: var(--ink); }
 .primary-outline { border-color: var(--accent); background: var(--surface); color: var(--accent); }
 .primary-outline:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-strong); }
-.copy-request-id { min-height: 28px; padding: 2px 7px; font-size: 12px; }
 .detail-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-width: 0; }
 .detail-heading > div { min-width: 0; }
 .detail-heading p { margin: 2px 0 0; }
@@ -273,9 +273,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .status-unavailable, .status-excluded, .status-failed { color: var(--danger); }
 .status-validating, .status-queued, .status-running { color: var(--warning); }
 .compliance-local { margin: 20px 0 0; color: var(--muted); font-size: 12px; }
-.request-id { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.state > .request-id { flex: 1 1 100%; }
 
 .status-badge.status-success { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); color: var(--ok); background: var(--ok-soft); }
 .status-badge.status-warning { border-color: color-mix(in srgb, var(--warning) 45%, var(--line)); color: var(--warning); background: var(--warning-soft); }

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title|default('研究验证系统') }} | A股短线量化验证</title>
-  <link rel="stylesheet" href="/static/css/app.css?v=layout-fix-20260918-3">
+  <link rel="stylesheet" href="/static/css/app.css?v=layout-fix-20260918-4">
   <link rel="stylesheet" href="/static/css/research-pages.css?v=layout-fix-20260918-2">
   <!-- Shared CSS keeps button:focus-visible and @media(max-width:700px) rules in one auditable stylesheet. -->
 </head>
@@ -52,7 +52,7 @@
       const value = String(status || "").toUpperCase();
       return statusLabels[value] || (status == null || status === "" ? "未提供" : String(status));
     };
-    const renderState = (target, state, text, requestId) => {
+    const renderState = (target, state, text) => {
       const element = typeof target === "string" ? document.querySelector(target) : target;
       if (!element) return;
       element.hidden = false;
@@ -61,27 +61,6 @@
       const messageNode = document.createElement("span");
       messageNode.textContent = text || "";
       element.append(messageNode);
-      if (requestId) {
-        const evidence = document.createElement("span");
-        evidence.className = "request-id";
-        evidence.textContent = "请求号：" + String(requestId);
-        evidence.title = "可将此请求号复制给运维或审核人员定位服务端证据。";
-        const copy = document.createElement("button");
-        copy.type = "button";
-        copy.className = "button-quiet copy-request-id";
-        copy.textContent = "复制";
-        copy.setAttribute("aria-label", "复制请求号");
-        copy.addEventListener("click", async () => {
-          try {
-            await navigator.clipboard.writeText(String(requestId));
-            copy.textContent = "已复制";
-          } catch (_) {
-            copy.textContent = "请手动复制";
-          }
-        });
-        evidence.append(" ", copy);
-        element.append(evidence);
-      }
     };
     window.ResearchApp = { apiFetch, readJson, saveTokens: save, clearTokens: clear, renderState, statusLabel, statusClass, errorMessage: message, idempotency: idem, getToken: () => read(ACCESS), getRefreshToken: () => read(REFRESH) };
     const themeButton = document.getElementById("theme-toggle");

@@ -17,7 +17,7 @@ def test_base_shell_uses_keyboard_safe_collapsible_navigation() -> None:
     assert 'id="main-nav"' in html
     assert 'data-open="false"' in html
     assert 'nav.querySelector("a")?.focus()' in html
-    assert '/static/css/app.css?v=layout-fix-20260918-3' in html
+    assert "/static/css/app.css?v=layout-fix-20260918-4" in html
     assert "prototype-pages.css" not in html
     assert not (ROOT / "static" / "css" / "prototype-pages.css").exists()
 
@@ -117,12 +117,15 @@ def test_order_plans_page_binds_query_date_and_rejects_invalid_dates() -> None:
     assert client.get("/order-plans?execution_date=not-a-date").status_code == 400
 
 
-def test_shared_state_request_evidence_tabs_and_report_summary_contracts() -> None:
+def test_shared_state_hides_internal_request_ids_and_keeps_page_contracts() -> None:
     base = BASE_TEMPLATE.read_text(encoding="utf-8")
     import_page = (ROOT / "templates" / "data_import.html").read_text(encoding="utf-8")
     report_page = (ROOT / "templates" / "reports.html").read_text(encoding="utf-8")
 
-    assert "requestId" in base
+    assert "const renderState = (target, state, text) =>" in base
+    assert "请求号" not in base
+    assert "copy-request-id" not in base
+    assert ".request-id" not in APP_CSS.read_text(encoding="utf-8")
     assert "statusLabel" in base
     assert "statusClass" in base
     assert 'role="tablist"' in import_page
@@ -133,3 +136,15 @@ def test_shared_state_request_evidence_tabs_and_report_summary_contracts() -> No
     assert 'id="report-cost-table"' in report_page
     assert 'id="report-deviation-table"' in report_page
     assert '<details class="developer-evidence">' in report_page
+
+
+def test_backtest_create_fields_share_aligned_control_rows() -> None:
+    page = (ROOT / "templates" / "backtest_create.html").read_text(encoding="utf-8")
+    css = APP_CSS.read_text(encoding="utf-8")
+
+    assert 'class="panel form-grid backtest-form-grid"' in page
+    assert "数据批次 ID" not in page
+    assert "策略版本 ID" not in page
+    assert "从下方已通过质量门禁的批次中选择。" not in page
+    assert ".backtest-form-grid > label" in css
+    assert "grid-template-rows: auto var(--control-height) auto" in css
