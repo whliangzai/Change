@@ -54,10 +54,11 @@
 :is([data-page="strategies"], [data-page="reports"]) :is(button, select, input):disabled { background: var(--surface-subtle); color: var(--muted); border-color: var(--line); opacity: 1; cursor: not-allowed; }
 
 .strategy-lookup-panel { padding-bottom: 14px !important; }
-.strategy-lookup-form { display: grid; grid-template-columns: minmax(180px, 320px) minmax(0, 1fr) auto; align-items: end; gap: 12px; margin-top: 16px; }
+.strategy-lookup-form { display: grid; grid-template-columns: minmax(280px, 520px) max-content; align-items: end; gap: 8px 12px; margin-top: 16px; }
 .strategy-lookup-form label { display: grid; gap: 5px; min-width: 0; color: var(--ink); font-size: 13px; font-weight: 600; }
+.strategy-lookup-form > .muted { grid-column: 1 / -1; max-width: 72ch; }
 .strategy-lookup-form .actions { align-items: end; }
-.strategy-lookup-form .actions button { width: 100%; }
+.strategy-lookup-form .actions button { width: auto; }
 .strategy-evidence-panel { padding-bottom: 16px !important; }
 .evidence-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 16px 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--surface-subtle); }
 .evidence-strip > div { display: grid; gap: 3px; padding: 0 14px; border-right: 1px solid var(--line); }
@@ -111,9 +112,7 @@
 .tab-list [role="tab"] { min-height: 44px; }
 
 @media (max-width: 900px) {
-  .strategy-lookup-form { grid-template-columns: 1fr 1fr; }
-  .strategy-lookup-form > .muted { grid-column: 1 / -1; }
-  .strategy-lookup-form .actions { grid-column: 2; }
+  .strategy-lookup-form { grid-template-columns: minmax(0, 1fr) auto; }
   .evidence-strip { grid-template-columns: 1fr; gap: 10px; }
   .evidence-strip > div { padding: 0 0 10px; border-right: 0; border-bottom: 1px solid var(--line); }
   .evidence-strip > div:last-child { padding-bottom: 0; border-bottom: 0; }
@@ -125,6 +124,7 @@
   .strategy-lookup-form { grid-template-columns: 1fr; }
   .strategy-lookup-form > .muted, .strategy-lookup-form .actions { grid-column: auto; }
   .strategy-lookup-form .actions { width: 100%; }
+  .strategy-lookup-form .actions button { width: 100%; }
   .report-picker .filters label { flex-basis: 100%; }
   .report-picker .filters button { width: 100%; }
   .research-page .state-banner { align-items: flex-start; }

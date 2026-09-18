@@ -9,8 +9,9 @@ from app.main import create_app
 
 def test_tushare_import_is_admin_only_and_uses_a_stable_scope_key() -> None:
     hasher = PasswordHasher()
+    admin_id = uuid4()
     accounts = {
-        "admin": LocalAccount(uuid4(), "admin", hasher.hash("pw"), frozenset({Role.ADMIN})),
+        "admin": LocalAccount(admin_id, "admin", hasher.hash("pw"), frozenset({Role.ADMIN})),
         "user": LocalAccount(uuid4(), "user", hasher.hash("pw"), frozenset({Role.USER})),
     }
     settings = load_settings(
@@ -44,3 +45,5 @@ def test_tushare_import_is_admin_only_and_uses_a_stable_scope_key() -> None:
     assert response.status_code == replay.status_code == 202
     assert response.json()["data"]["task_key"] == "data-import:2025-01-02:tushare-pilot"
     assert len(calls) == 1
+    assert calls[0][1] == ("2025-01-02", "pilot", str(admin_id))
+    assert response.json()["data"]["value"]["owner_id"] == str(admin_id)

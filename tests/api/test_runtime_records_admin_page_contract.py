@@ -71,11 +71,25 @@ def test_admin_page_requires_retry_evidence_and_preserves_audit_identifiers() ->
         'id="retry-form-error"',
         'id="jobs-result-count"',
         'id="audit-result-count"',
+        'id="jobs-page-size"',
+        'id="audit-page-size"',
+        'aria-label="任务状态分页"',
+        'aria-label="审计事件分页"',
     ):
         assert identifier in page.text
     assert "renderFailure" in script.text
     assert "request_id" in script.text
     assert "Idempotency-Key" in script.text
+    assert "page_size=50" not in script.text
+    assert "Number(data.page_size)" in script.text
+    assert "<br>" not in script.text
+
+    css = client.get("/static/css/app.css").text
+    assert ".admin-page select" in css
+    assert ".admin-page #jobs-filters { margin-bottom: 20px; }" in css
+    assert ".admin-page #jobs-table { width: 1980px; min-width: 1980px; }" in css
+    assert ".admin-page #audit-table { width: 1660px; min-width: 1660px; }" in css
+    assert "overflow-wrap: normal; white-space: nowrap;" in css
 
 
 def test_supplier_import_page_exposes_persistent_job_states_and_recovery_paths() -> None:

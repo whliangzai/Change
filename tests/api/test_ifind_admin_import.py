@@ -10,8 +10,9 @@ from app.main import create_app
 
 def _client(*, enabled: bool = True):
     hasher = PasswordHasher()
+    admin_id = uuid4()
     accounts = {
-        "admin": LocalAccount(uuid4(), "admin", hasher.hash("pw"), frozenset({Role.ADMIN})),
+        "admin": LocalAccount(admin_id, "admin", hasher.hash("pw"), frozenset({Role.ADMIN})),
         "user": LocalAccount(uuid4(), "user", hasher.hash("pw"), frozenset({Role.USER})),
     }
     settings = load_settings(
@@ -41,11 +42,11 @@ def _client(*, enabled: bool = True):
         headers={"Idempotency-Key": "login-user"},
         json={"username": "user", "password": "pw"},
     ).json()["data"]["access_token"]
-    return client, token, user_token, calls
+    return client, token, user_token, calls, admin_id
 
 
 def test_ifind_admin_import_is_rbac_idempotent_and_returns_stable_task_key() -> None:
-    client, token, _, calls = _client()
+    client, token, _, calls, admin_id = _client()
     headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": "ifind-20250102-pilot"}
     first = client.post(
         "/api/v1/admin/data-imports/ifind/2025-01-02?scope=pilot",
@@ -61,17 +62,19 @@ def test_ifind_admin_import_is_rbac_idempotent_and_returns_stable_task_key() -> 
     assert first.json()["data"]["task_key"] == "data-import:2025-01-02:ifind-pilot"
     assert replay.json()["data"] == first.json()["data"]
     assert len(calls) == 1
+    assert calls[0]["args"] == ("2025-01-02", "pilot", str(admin_id))
+    assert first.json()["data"]["value"]["owner_id"] == str(admin_id)
 
 
 def test_ifind_admin_import_requires_admin_and_enabled_provider() -> None:
-    client, _, user_token, _ = _client()
+    client, _, user_token, _, _ = _client()
     denied = client.post(
         "/api/v1/admin/data-imports/ifind/2025-01-02?scope=pilot",
         headers={"Authorization": f"Bearer {user_token}", "Idempotency-Key": "ifind-user"},
     )
     assert denied.status_code == 403
 
-    disabled_client, disabled_token, _, _ = _client(enabled=False)
+    disabled_client, disabled_token, _, _, _ = _client(enabled=False)
     disabled = disabled_client.post(
         "/api/v1/admin/data-imports/ifind/2025-01-02?scope=pilot",
         headers={
@@ -83,7 +86,7 @@ def test_ifind_admin_import_requires_admin_and_enabled_provider() -> None:
 
 
 def test_ifind_admin_import_requires_idempotency_key() -> None:
-    client, token, _, _ = _client()
+    client, token, _, _, _ = _client()
     response = client.post(
         "/api/v1/admin/data-imports/ifind/2025-01-02?scope=pilot",
         headers={"Authorization": f"Bearer {token}"},
@@ -92,7 +95,7 @@ def test_ifind_admin_import_requires_idempotency_key() -> None:
 
 
 def test_ifind_admin_import_surfaces_queue_unavailable() -> None:
-    client, token, _, _ = _client()
+    client, token, _, _, _ = _client()
 
     def unavailable(*_args, **_kwargs):
         raise DependencyError("Redis queue is unavailable")

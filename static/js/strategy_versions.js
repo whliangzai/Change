@@ -13,6 +13,7 @@
   let activeVersionRequest = 0;
   let activeListRequest = 0;
   let writing = false;
+  let versionsReady = false;
   const statuses = { DRAFT: '草稿', PENDING_REVIEW: '待审核', PUBLISHED: '已发布', ARCHIVED: '已归档' };
 
   // Token roles only guide the UI; the server remains the authorization boundary.
@@ -35,9 +36,9 @@
     decision.disabled = !allowed.length;
     $('#strategy-review-submit').disabled = !allowed.length;
     $('#strategy-review').elements.review_note.disabled = !allowed.length;
-    $('#strategy-id').disabled = writing;
+    $('#strategy-id').disabled = writing || !versionsReady;
     $('#strategy-refresh').disabled = writing;
-    $('#strategy-lookup button').disabled = writing;
+    $('#strategy-lookup button').disabled = writing || !versionsReady || !$('#strategy-id').value;
     $('#strategy-create-submit').disabled = writing || !hasRole('USER', 'ADMIN');
     $('#strategy-review-evidence').textContent = !bound ? '请先加载版本详情，再核对参数与差异。'
       : !canReview() ? '当前账户可查看版本；提交审核、发布和退回需要审核员或管理员权限。'
@@ -58,7 +59,12 @@
 
   async function loadVersions() {
     const listNumber = ++activeListRequest;
-    $('#strategy-options').replaceChildren();
+    const select = $('#strategy-id');
+    const selectedId = select.value;
+    const availableIds = new Set();
+    versionsReady = false;
+    select.replaceChildren(new Option('正在加载可访问版本…', ''));
+    syncReview();
     let count = 0;
     try {
       for (let page = 1; ; page += 1) {
@@ -67,21 +73,28 @@
         const data = payload.data || {};
         const items = data.items || [];
         items.forEach((record) => {
-          const option = document.createElement('option');
-          option.value = record.strategy_version_id;
-          option.label = `${record.name || record.code || '策略'} · ${record.version || '--'} · ${statuses[record.status] || record.status}`;
-          $('#strategy-options').append(option);
+          const id = record.strategy_version_id;
+          if (!id || availableIds.has(id)) return;
+          availableIds.add(id);
+          const label = `${record.name || record.code || '未命名策略'} · 版本 ${record.version || '--'} · ${statuses[record.status] || record.status || '状态未知'}`;
+          select.append(new Option(label, id));
         });
         count += items.length;
         if (!items.length || count >= Number(data.total || 0)) break;
       }
-      $('#strategy-id-hint').textContent = count ? `已加载 ${count} 个可访问版本，可按名称或 ID 选择。` : '暂无策略版本，请先创建草稿。';
+      select.children[0].textContent = count ? '请选择策略版本' : '暂无可访问的策略版本';
+      select.value = availableIds.has(selectedId) ? selectedId : '';
+      versionsReady = count > 0;
+      $('#strategy-id-hint').textContent = count ? `已加载 ${count} 个可访问版本；选项按“策略名称 · 版本号 · 状态”展示。` : '暂无策略版本，请先创建草稿。';
       if (!count) $('#strategy-create-panel').open = true;
       if (!currentRecord) setState('#strategy-state', count ? '请选择版本并查看详情。' : '暂无策略版本，可从创建草稿开始。', 'empty');
     } catch (error) {
       if (listNumber !== activeListRequest) return;
-      $('#strategy-id-hint').textContent = '版本列表加载失败，可刷新重试或输入已知版本 ID。';
+      select.replaceChildren(new Option('版本列表加载失败', ''));
+      $('#strategy-id-hint').textContent = '无法加载可访问版本；请刷新重试。';
       showRecovery(error, '#strategy-state');
+    } finally {
+      syncReview();
     }
   }
 
@@ -164,7 +177,7 @@
     clearVersion();
     const requestNumber = activeVersionRequest;
     if (!id) {
-      setState('#strategy-state', '请填写策略版本 ID。', 'error');
+      setState('#strategy-state', '请选择策略版本。', 'error');
       return;
     }
     setHidden('#strategy-unavailable', true);
@@ -194,7 +207,7 @@
     event.preventDefault();
     loadDiff($('#strategy-id').value.trim());
   });
-  $('#strategy-id').addEventListener('input', () => {
+  $('#strategy-id').addEventListener('change', () => {
     clearVersion();
     setHidden('#strategy-unavailable', true);
     setHidden('#strategy-permission', true);

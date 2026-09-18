@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
@@ -155,6 +156,14 @@ def _mark_queue_failed(
     _audit_job(request, principal, action, failed, "FAILURE")
 
 
+def _provider_job_owner(record: JobRunRecord, fallback: UUID) -> UUID:
+    value = record.value if isinstance(record.value, dict) else {}
+    try:
+        return UUID(str(value.get("owner_id")))
+    except (TypeError, ValueError, AttributeError):
+        return fallback
+
+
 def _enqueue_provider(
     request: Request,
     principal: Principal,
@@ -163,8 +172,10 @@ def _enqueue_provider(
     scope: Literal["pilot", "full"],
     *,
     retry_failed: bool = False,
+    owner_id: UUID | None = None,
 ) -> tuple[JobRunRecord, bool]:
     _ensure_provider_allowed(request, provider, scope)
+    batch_owner_id = owner_id or principal.user_id
     task_key = f"data-import:{business_date.isoformat()}:{provider}-{scope}"
     store = request.app.state.job_run_store
     record, created = store.reserve_queued_owned(
@@ -172,7 +183,7 @@ def _enqueue_provider(
         business_date,
         task_key,
         phase="enqueueing",
-        value={"provider": provider, "scope": scope},
+        value={"provider": provider, "scope": scope, "owner_id": str(batch_owner_id)},
         retry_failed=retry_failed,
     )
     if not created:
@@ -182,7 +193,13 @@ def _enqueue_provider(
     try:
         # RQ job IDs have a stricter charset than our human-readable task key.
         # Keep idempotency in the durable job_run row and use its UUID for RQ.
-        enqueue_fn(function, business_date.isoformat(), scope, job_id=record.run_id)
+        enqueue_fn(
+            function,
+            business_date.isoformat(),
+            scope,
+            str(batch_owner_id),
+            job_id=record.run_id,
+        )
     except DependencyError as dependency_exc:
         _mark_queue_failed(
             request, principal, record, dependency_exc, f"{provider.upper()}_IMPORT_QUEUE"
@@ -215,11 +232,24 @@ def _requeue_provider(
     )
     if not claimed:
         raise StateConflictError("This queued job is already being recovered or has started")
+    batch_owner_id = _provider_job_owner(current, principal.user_id)
+    record = replace(
+        record,
+        value={
+            **(record.value if isinstance(record.value, dict) else {}),
+            "owner_id": str(batch_owner_id),
+        },
+    )
+    store.replace(record)
     function = run_ifind_import if provider == "ifind" else run_tushare_import
     enqueue_fn = getattr(request.app.state, f"{provider}_enqueue", enqueue)
     try:
         enqueue_fn(
-            function, current.business_date.isoformat(), scope, job_id=current.run_id
+            function,
+            current.business_date.isoformat(),
+            scope,
+            str(batch_owner_id),
+            job_id=current.run_id,
         )
     except DependencyError as dependency_exc:
         _mark_queue_failed(
@@ -329,6 +359,7 @@ def retry_job(job_id: str, request: Request, principal: Admin) -> JSONResponse:
         current.business_date,
         scope,  # type: ignore[arg-type]
         retry_failed=True,
+        owner_id=_provider_job_owner(current, principal.user_id),
     )
     _audit_job(request, principal, "JOB_RETRY", record, "SUCCESS")
     return _success(request, _job_payload(record, request), 202)

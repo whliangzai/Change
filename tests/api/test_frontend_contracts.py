@@ -17,7 +17,8 @@ def test_base_shell_uses_keyboard_safe_collapsible_navigation() -> None:
     assert 'id="main-nav"' in html
     assert 'data-open="false"' in html
     assert 'nav.querySelector("a")?.focus()' in html
-    assert "/static/css/app.css?v=layout-fix-20260918-4" in html
+    assert "/static/css/app.css?v=layout-fix-20260918-6" in html
+    assert "/static/css/research-pages.css?v=layout-fix-20260918-3" in html
     assert "prototype-pages.css" not in html
     assert not (ROOT / "static" / "css" / "prototype-pages.css").exists()
 
@@ -94,6 +95,18 @@ def test_existing_dom_contracts_remain_present_on_research_pages() -> None:
             assert marker in html, f"{name} lost DOM contract {marker}"
 
 
+def test_strategy_version_uses_an_authorized_version_picker() -> None:
+    page = (ROOT / "templates" / "strategy_versions.html").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "js" / "strategy_versions.js").read_text(encoding="utf-8")
+
+    assert '<select id="strategy-id"' in page
+    assert 'list="strategy-options"' not in page
+    assert "strategy_published" not in page
+    assert "版本 ID 用于唯一标识策略参数快照" in page
+    assert "new Option(label, id)" in script
+    assert "addEventListener('change'" in script
+
+
 def test_order_plans_page_binds_query_date_and_rejects_invalid_dates() -> None:
     from uuid import uuid4
 
@@ -132,6 +145,9 @@ def test_shared_state_hides_internal_request_ids_and_keeps_page_contracts() -> N
     assert 'role="tab"' in import_page
     assert 'aria-controls="provider-import-panel"' in import_page
     assert 'aria-controls="local-import-panel"' in import_page
+    assert "/static/js/data_import.js?v=data-import-tabs-20260918-1" in import_page
+    assert "质量门禁通过的本地文件、Tushare 或 iFinD 批次均可用于后续研究" in import_page
+    assert "仅完整 Tushare 主批次可用于后续研究" not in import_page
     assert 'id="report-metrics-table"' in report_page
     assert 'id="report-cost-table"' in report_page
     assert 'id="report-deviation-table"' in report_page

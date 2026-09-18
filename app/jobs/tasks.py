@@ -6,6 +6,7 @@ import os
 from collections.abc import Callable
 from datetime import date
 from typing import Any, NoReturn
+from uuid import UUID
 
 from app.core.contracts import AuditWriter
 from app.core.errors import DependencyError
@@ -120,7 +121,9 @@ def _record_provider_failure(
     raise error
 
 
-def run_ifind_import(business_date: date | str, scope: str) -> JobResult:
+def run_ifind_import(
+    business_date: date | str, scope: str, owner_id: UUID | str | None = None
+) -> JobResult:
     """RQ entry point that constructs the iFinD runtime service in the worker."""
     if scope not in {"pilot", "full"}:
         raise ValueError("scope must be pilot or full")
@@ -135,6 +138,7 @@ def run_ifind_import(business_date: date | str, scope: str) -> JobResult:
     )
 
     normalized_date = date.fromisoformat(str(business_date)[:10])
+    normalized_owner_id = UUID(str(owner_id)) if owner_id is not None else UUID(int=0)
     settings = load_settings()
     engine = make_engine(settings.database_url)
     repository = SqlAlchemyResearchRepository.from_engine(
@@ -182,6 +186,7 @@ def run_ifind_import(business_date: date | str, scope: str) -> JobResult:
         client,
         repository,
         artifact_root=data_root,
+        owner_id=normalized_owner_id,
         mapping_version="v1",
     )
     try:
@@ -220,7 +225,9 @@ def import_tushare_data(
     )
 
 
-def run_tushare_import(business_date: date | str, scope: str) -> JobResult:
+def run_tushare_import(
+    business_date: date | str, scope: str, owner_id: UUID | str | None = None
+) -> JobResult:
     """RQ entry point. Secrets are read only from Settings, never job arguments."""
     if scope not in {"pilot", "full"}:
         raise ValueError("scope must be pilot or full")
@@ -234,6 +241,7 @@ def run_tushare_import(business_date: date | str, scope: str) -> JobResult:
     from app.infrastructure.tushare import TushareHttpClient
 
     normalized_date = date.fromisoformat(str(business_date)[:10])
+    normalized_owner_id = UUID(str(owner_id)) if owner_id is not None else UUID(int=0)
     settings = load_settings()
     engine = make_engine(settings.database_url)
     repository = SqlAlchemyResearchRepository.from_engine(
@@ -281,6 +289,7 @@ def run_tushare_import(business_date: date | str, scope: str) -> JobResult:
         repository,
         validation_client=validator,
         artifact_root=data_root,
+        owner_id=normalized_owner_id,
         mapping_version="v1",
         price_tolerance=settings.akshare_price_relative_tolerance,
         volume_tolerance=settings.akshare_volume_relative_tolerance,

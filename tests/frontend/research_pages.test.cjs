@@ -45,19 +45,24 @@ function setup(file, handler, roles = ['USER', 'ADMIN'], dataset = {}) {
   get('#strategy-review').review_note = get('#strategy-review').fields.review_note;
   get('#strategy-review').decision = get('#strategy-review').fields.decision;
   get('#batch-page-size').value = '50';
+  get('#jobs-page-size').value = '25';
+  get('#audit-page-size').value = '25';
   const calls = [];
   const context = {
     document: {
       querySelector: () => root, createElement: () => new Element(),
       createDocumentFragment: () => new Element(), createTextNode: (text) => ({ textContent: text }),
     },
-    window: { ResearchApp: {
-      apiFetch: (url, options) => { calls.push({ url, options }); return handler(url, options); },
-      readJson: async (payload) => payload,
-      renderState: (target, kind, text) => { target.hidden = false; target.className = kind; target.textContent = text; },
-      errorMessage: () => '请求失败', idempotency: () => 'test-key',
-      getToken: () => `test.${Buffer.from(JSON.stringify({ roles })).toString('base64url')}.test`,
-    } },
+    window: {
+      location: { search: '' },
+      ResearchApp: {
+        apiFetch: (url, options) => { calls.push({ url, options }); return handler(url, options); },
+        readJson: async (payload) => payload,
+        renderState: (target, kind, text) => { target.hidden = false; target.className = kind; target.textContent = text; },
+        errorMessage: () => '请求失败', idempotency: () => 'test-key',
+        getToken: () => `test.${Buffer.from(JSON.stringify({ roles })).toString('base64url')}.test`,
+      },
+    },
     Option: class extends Element { constructor(label, value) { super(); this.textContent = label; this.value = value; } },
     atob: (value) => Buffer.from(value, 'base64').toString(),
     URLSearchParams, Intl, location: {}, navigator: {},
@@ -187,7 +192,11 @@ test('strategy lookup binds review to loaded evidence and rejects stale lookup r
   const pending = {};
   const posts = [];
   const ui = setup('strategy_versions.js', (url, options) => {
-    if (url.includes('?')) return Promise.resolve({ data: { items: [], total: 0 } });
+    if (url.includes('?')) return Promise.resolve({ data: { items: [
+      { strategy_version_id: 'A', name: '策略 A', version: 1, status: 'DRAFT' },
+      { strategy_version_id: 'B', name: '策略 B', version: 2, status: 'DRAFT' },
+      { strategy_version_id: 'C', name: '策略 C', version: 3, status: 'PUBLISHED' },
+    ], total: 3 } });
     const id = url.split('/')[4];
     if (options?.method === 'POST') {
       posts.push({ id, body: options.body });
@@ -199,7 +208,7 @@ test('strategy lookup binds review to loaded evidence and rejects stale lookup r
   assert.equal(ui.calls.some((call) => call.url.includes('/diff')), false);
   assert.equal(ui.get('#strategy-review-submit').disabled, true);
   function choose(id) {
-    ui.get('#strategy-id').value = id; ui.get('#strategy-id').emit('input');
+    ui.get('#strategy-id').value = id; ui.get('#strategy-id').emit('change');
     ui.get('#strategy-lookup').emit('submit');
   }
   choose('A'); choose('B');
@@ -217,7 +226,7 @@ test('strategy lookup binds review to loaded evidence and rejects stale lookup r
   pending.B.resolve({ data: { strategy_version_id: 'B', status: 'PENDING_REVIEW', changes: {} } });
   await flush();
   assert.equal(ui.get('#strategy-review').decision.value, 'PUBLISH');
-  ui.get('#strategy-id').value = 'C'; ui.get('#strategy-id').emit('input');
+  ui.get('#strategy-id').value = 'C'; ui.get('#strategy-id').emit('change');
   ui.get('#strategy-review').emit('submit');
   await flush();
   assert.equal(posts.length, 1);
@@ -227,13 +236,37 @@ test('strategy lookup binds review to loaded evidence and rejects stale lookup r
 test('ordinary users cannot review and published strategies remain read-only', async () => {
   for (const [roles, status] of [[['USER'], 'DRAFT'], [['ADMIN'], 'PUBLISHED']]) {
     const ui = setup('strategy_versions.js', async (url) => url.includes('?')
-      ? { data: { items: [], total: 0 } }
+      ? { data: { items: [{ strategy_version_id: 'A', name: '策略 A', version: 1, status }], total: 1 } }
       : { data: { strategy_version_id: 'A', status, changes: {} } }, roles);
     await flush();
     ui.get('#strategy-id').value = 'A';
     await ui.get('#strategy-lookup').emit('submit'); await flush();
     assert.equal(ui.get('#strategy-review-submit').disabled, true);
   }
+});
+
+test('admin pagination uses server metadata and independent page-size controls', async () => {
+  const ui = setup('admin.js', async (url) => {
+    const parsed = new URL(url, 'http://test');
+    return { data: {
+      items: [],
+      page: Number(parsed.searchParams.get('page')),
+      page_size: Number(parsed.searchParams.get('page_size')),
+      total: parsed.pathname.endsWith('/jobs') ? 61 : 42,
+    } };
+  });
+  await flush();
+  assert.match(ui.calls.find((call) => call.url.includes('/jobs?')).url, /page=1&page_size=25/);
+  assert.match(ui.calls.find((call) => call.url.includes('/audit-events')).url, /page=1&page_size=25/);
+  assert.match(ui.get('#jobs-pagination').children[0].textContent, /第 1 \/ 3 页，共 61 条/);
+  await ui.get('#jobs-pagination').children[1].children[2].emit('click');
+  await flush();
+  assert.match(ui.calls.at(-1).url, /\/jobs\?page=2&page_size=25/);
+  ui.get('#audit-page-size').value = '10';
+  await ui.get('#audit-page-size').emit('change');
+  await flush();
+  assert.match(ui.calls.at(-1).url, /\/audit-events\?page=1&page_size=10/);
+  assert.match(ui.get('#audit-pagination').children[0].textContent, /第 1 \/ 5 页，共 42 条/);
 });
 
 test('quality warnings survive empty errors; both categories appear together', async () => {
@@ -336,4 +369,18 @@ test('report page keeps summary tables and folded raw evidence', () => {
 test('data import template has balanced form tags', () => {
   const html = fs.readFileSync(path.join(__dirname, '../../templates/data_import.html'), 'utf8');
   assert.equal((html.match(/<form\b/g) || []).length, (html.match(/<\/form>/g) || []).length);
+});
+
+test('data import tabs switch between provider and local panels', () => {
+  const ui = setup('data_import.js', async () => ({
+    data: { queue_available: true, providers: { tushare: { enabled: true } } },
+  }));
+
+  assert.equal(ui.get('#provider-import-panel').hidden, false);
+  assert.equal(ui.get('#local-import-panel').hidden, true);
+
+  ui.get('#local-import-tab').emit('click');
+
+  assert.equal(ui.get('#provider-import-panel').hidden, true);
+  assert.equal(ui.get('#local-import-panel').hidden, false);
 });

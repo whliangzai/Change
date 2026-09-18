@@ -354,6 +354,48 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .pagination-current { border: 1px solid var(--accent); border-radius: var(--control-radius); background: var(--accent-soft); color: var(--accent); }
 .pagination-button:disabled { background: var(--surface-subtle); }
 
+.admin-page .section-title { justify-content: space-between; align-items: baseline; flex-wrap: wrap; }
+.admin-page .section-title h2 { margin-bottom: 0; }
+.admin-page .section-title p { margin: 0 0 0 auto; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.admin-page .list-footer { margin-top: 12px; }
+.admin-page .pagination { justify-content: flex-end; margin: 0; }
+.admin-page .pagination .button-quiet { min-height: 34px; padding: 4px 9px; }
+.admin-page #jobs-filters { margin-bottom: 20px; }
+.admin-page select {
+  appearance: none;
+  padding-right: 36px;
+  background-color: var(--surface);
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%;
+  background-repeat: no-repeat;
+  background-size: 5px 5px;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+.admin-page select:hover:not(:disabled), .admin-page select:open { border-color: var(--accent); background-color: var(--accent-soft); }
+.admin-page select option { background: var(--surface); color: var(--ink); }
+.admin-page select option:checked { background: var(--accent); color: var(--on-accent); }
+.admin-page .table-wrap { overflow-x: auto; scrollbar-gutter: stable; }
+.admin-page table { table-layout: auto; }
+.admin-page table :is(th, td) { overflow-wrap: normal; white-space: nowrap; }
+.admin-page table code { overflow-wrap: normal; white-space: nowrap; }
+.admin-page #jobs-table { width: 1980px; min-width: 1980px; }
+.admin-page #jobs-table :is(th, td):nth-child(1) { width: 330px; }
+.admin-page #jobs-table :is(th, td):nth-child(2) { width: 150px; }
+.admin-page #jobs-table :is(th, td):nth-child(3) { width: 130px; }
+.admin-page #jobs-table :is(th, td):nth-child(4) { width: 160px; }
+.admin-page #jobs-table :is(th, td):nth-child(5) { width: 100px; }
+.admin-page #jobs-table :is(th, td):nth-child(6) { width: 220px; }
+.admin-page #jobs-table :is(th, td):nth-child(7) { width: 430px; }
+.admin-page #jobs-table :is(th, td):nth-child(8) { width: 320px; }
+.admin-page #jobs-table :is(th, td):nth-child(9) { width: 140px; }
+.admin-page #audit-table { width: 1660px; min-width: 1660px; }
+.admin-page #audit-table :is(th, td):nth-child(1) { width: 280px; }
+.admin-page #audit-table :is(th, td):nth-child(2) { width: 260px; }
+.admin-page #audit-table :is(th, td):nth-child(3) { width: 140px; }
+.admin-page #audit-table :is(th, td):nth-child(4) { width: 220px; }
+.admin-page #audit-table :is(th, td):nth-child(5) { width: 620px; }
+.admin-page #audit-table :is(th, td):nth-child(6) { width: 140px; }
+
 /* A single filter field and its action should read as one compact row. */
 :is(#execution-plan-filter, #plan-filter) {
   grid-template-columns: minmax(240px, 420px) auto;
