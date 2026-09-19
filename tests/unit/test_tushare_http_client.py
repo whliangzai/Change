@@ -49,6 +49,30 @@ def test_tushare_client_maps_records_and_does_not_put_token_in_preflight() -> No
     assert "private-token" not in json.dumps(client.preflight())
 
 
+def test_tushare_client_uses_documented_multi_symbol_filter_for_index_master() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.read())
+        assert body["api_name"] == "index_basic"
+        assert body["params"] == {"symbol": "000001,000300"}
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "fields": ["ts_code", "list_date", "market"],
+                    "items": [
+                        ["000001.SH", "19910715", "SSE"],
+                        ["000300.SH", "20050408", "SSE"],
+                    ],
+                },
+            },
+        )
+
+    rows = _client(handler).fetch_dataset("index_master", ["000300.SH", "000001.SH"])
+
+    assert {row["ts_code"] for row in rows} == {"000001.SH", "000300.SH"}
+
+
 def test_tushare_client_classifies_permission_and_empty_data() -> None:
     permission = _client(
         lambda _request: httpx.Response(200, json={"code": -2001, "msg": "权限不足"})

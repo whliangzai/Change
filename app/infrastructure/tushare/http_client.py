@@ -175,7 +175,12 @@ class TushareHttpClient:
         def fetch(chunk: list[str]) -> list[dict[str, Any]]:
             params = dict(extra or {})
             if chunk:
-                params["ts_code"] = ",".join(chunk)
+                if dataset == "index_master":
+                    # index_basic documents multi-value filtering on ``symbol``;
+                    # a comma-separated ``ts_code`` returns a successful but empty payload.
+                    params["symbol"] = ",".join(sorted(code.split(".", 1)[0] for code in chunk))
+                else:
+                    params["ts_code"] = ",".join(chunk)
             if start_date is not None:
                 params["start_date"] = str(start_date).replace("-", "")
             if end_date is not None:
