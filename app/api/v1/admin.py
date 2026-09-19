@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -35,6 +36,32 @@ def _queue_available(request: Request) -> bool:
         return bool(check())
     except Exception:
         return False
+
+
+def _execution_available(request: Request) -> bool:
+    if request.app.state.settings.provider_import_execution == "background":
+        dispatcher = request.app.state.provider_execution
+        return bool(dispatcher.available)
+    return _queue_available(request)
+
+
+def _enqueue_function(request: Request, provider: str) -> Callable[..., Any]:
+    injected = getattr(request.app.state, f"{provider}_enqueue", None)
+    if injected is not None:
+        return cast(Callable[..., Any], injected)
+    if request.app.state.settings.provider_import_execution == "background":
+        return cast(Callable[..., Any], request.app.state.provider_execution.enqueue)
+    return enqueue
+
+
+def _dispatch_error(request: Request, exc: Exception) -> DependencyError:
+    mode = request.app.state.settings.provider_import_execution
+    if mode == "background":
+        return DependencyError(
+            f"Background provider execution is unavailable ({type(exc).__name__})"
+        )
+    detail = str(exc).replace("\r", " ").replace("\n", " ").strip()[:160]
+    return DependencyError(f"Redis queue is unavailable ({type(exc).__name__}): {detail}")
 
 
 def _provider_capability(request: Request, provider: str) -> dict[str, object]:
@@ -140,6 +167,7 @@ def _audit_job(
         after_summary={
             "task_key": record.idempotency_key,
             "job_id": record.run_id,
+            "execution_mode": request.app.state.settings.provider_import_execution,
             "request_id": request.state.request_id,
             "request_idempotency_key": getattr(request.state, "idempotency_key", None),
             "status": record.status.upper(),
@@ -189,7 +217,7 @@ def _enqueue_provider(
     if not created:
         return record, False
     function = run_ifind_import if provider == "ifind" else run_tushare_import
-    enqueue_fn = getattr(request.app.state, f"{provider}_enqueue", enqueue)
+    enqueue_fn = _enqueue_function(request, provider)
     try:
         # RQ job IDs have a stricter charset than our human-readable task key.
         # Keep idempotency in the durable job_run row and use its UUID for RQ.
@@ -202,16 +230,13 @@ def _enqueue_provider(
         )
     except DependencyError as dependency_exc:
         _mark_queue_failed(
-            request, principal, record, dependency_exc, f"{provider.upper()}_IMPORT_QUEUE"
+            request, principal, record, dependency_exc, f"{provider.upper()}_IMPORT_DISPATCH"
         )
         raise
     except Exception as exc:
-        detail = str(exc).replace("\r", " ").replace("\n", " ").strip()[:160]
-        dependency_error = DependencyError(
-            f"Redis queue is unavailable ({type(exc).__name__}): {detail}"
-        )
+        dependency_error = _dispatch_error(request, exc)
         _mark_queue_failed(
-            request, principal, record, dependency_error, f"{provider.upper()}_IMPORT_QUEUE"
+            request, principal, record, dependency_error, f"{provider.upper()}_IMPORT_DISPATCH"
         )
         raise dependency_error from exc
     marked: JobRunRecord | None = store.mark_queued(record.run_id, phase="provider-import")
@@ -242,7 +267,7 @@ def _requeue_provider(
     )
     store.replace(record)
     function = run_ifind_import if provider == "ifind" else run_tushare_import
-    enqueue_fn = getattr(request.app.state, f"{provider}_enqueue", enqueue)
+    enqueue_fn = _enqueue_function(request, provider)
     try:
         enqueue_fn(
             function,
@@ -253,16 +278,13 @@ def _requeue_provider(
         )
     except DependencyError as dependency_exc:
         _mark_queue_failed(
-            request, principal, record, dependency_exc, f"{provider.upper()}_IMPORT_REQUEUE"
+            request, principal, record, dependency_exc, f"{provider.upper()}_IMPORT_REDISPATCH"
         )
         raise
     except Exception as exc:
-        detail = str(exc).replace("\r", " ").replace("\n", " ").strip()[:160]
-        dependency_error = DependencyError(
-            f"Redis queue is unavailable ({type(exc).__name__}): {detail}"
-        )
+        dependency_error = _dispatch_error(request, exc)
         _mark_queue_failed(
-            request, principal, record, dependency_error, f"{provider.upper()}_IMPORT_REQUEUE"
+            request, principal, record, dependency_error, f"{provider.upper()}_IMPORT_REDISPATCH"
         )
         raise dependency_error from exc
     marked: JobRunRecord | None = store.mark_queued(record.run_id, phase="provider-import")
@@ -272,6 +294,8 @@ def _requeue_provider(
 @router.get("/admin/data-imports/capabilities")
 def import_capabilities(request: Request, _: Admin) -> JSONResponse:
     queue_available = _queue_available(request)
+    execution_mode = request.app.state.settings.provider_import_execution
+    execution_available = _execution_available(request)
     tushare = _provider_capability(request, "tushare")
     ifind = _provider_capability(request, "ifind")
     return _success(
@@ -282,8 +306,12 @@ def import_capabilities(request: Request, _: Admin) -> JSONResponse:
             "ifind": ifind,
             "tushare_enabled": tushare["enabled"],
             "ifind_enabled": ifind["enabled"],
-            "queue": {"available": queue_available},
-            "queue_available": queue_available,
+            "execution": {"mode": execution_mode, "available": execution_available},
+            "queue": {
+                "required": execution_mode == "rq",
+                "available": queue_available if execution_mode == "rq" else None,
+            },
+            "queue_available": queue_available if execution_mode == "rq" else False,
             "akshare": {"role": "validation_only", "can_replace_primary": False},
         },
     )
@@ -374,7 +402,7 @@ def enqueue_ifind_import(
 ) -> JSONResponse:
     """Queue an auditable iFinD import behind the protected admin boundary."""
     record, _ = _enqueue_provider(request, principal, "ifind", business_date, scope)
-    _audit_job(request, principal, "IFIND_IMPORT_QUEUE", record, "SUCCESS")
+    _audit_job(request, principal, "IFIND_IMPORT_DISPATCH", record, "SUCCESS")
     return _success(request, _job_payload(record, request), 202)
 
 
@@ -387,7 +415,7 @@ def enqueue_tushare_import(
 ) -> JSONResponse:
     """Queue the primary Tushare supplier import behind the admin boundary."""
     record, _ = _enqueue_provider(request, principal, "tushare", business_date, scope)
-    _audit_job(request, principal, "TUSHARE_IMPORT_QUEUE", record, "SUCCESS")
+    _audit_job(request, principal, "TUSHARE_IMPORT_DISPATCH", record, "SUCCESS")
     return _success(request, _job_payload(record, request), 202)
 
 

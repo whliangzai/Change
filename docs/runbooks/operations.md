@@ -39,6 +39,15 @@ worker explicitly. The service fails closed when required runtime configuration 
 `JOB_QUEUE_STALE_AFTER_SECONDS` defaults to 300 seconds. It is the minimum age before an
 ADMIN may recover a queued task whose database reservation succeeded but whose Redis enqueue
 did not complete.
+
+`PROVIDER_IMPORT_EXECUTION` defaults to `rq`. In `development` or `test` only, it may be set
+explicitly to `background`; the application then serializes Tushare and iFinD imports on one
+lifecycle-managed thread and does not require or probe Redis/RQ. Shutdown stops accepting new
+imports and waits for accepted work. This mode is for one local application process only;
+`simulation` and `production` reject it at configuration load and must continue using Redis/RQ.
+After a background-process restart, provider imports left `RUNNING` are marked as retryable
+dependency failures; `QUEUED` recovery continues to use the existing stale timeout and ADMIN
+recovery action.
 Configure `TUSHARE_ENABLED=true` and
 provide `TUSHARE_TOKEN` only through the deployment secret environment; never pass
 it in a task payload, URL, or audit record. The scheduler calls

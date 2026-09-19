@@ -11,14 +11,14 @@
   <section id="provider-import-panel" class="panel tab-panel" role="tabpanel" aria-labelledby="provider-import-tab">
     <h2>供应商导入</h2>
     <p class="muted">Token/Refresh Token 仅从部署环境读取，页面不输入也不展示。Tushare 是主源；AKShare 只做校验，不会替代 Tushare 成为主批次。</p>
-    <div id="provider-capabilities-state" class="state loading" role="status">正在读取供应商和队列状态…</div>
+    <div id="provider-capabilities-state" class="state loading" role="status">正在读取供应商和执行器状态…</div>
     <div id="provider-full-reason" class="state unavailable" role="status" hidden></div>
     <form id="provider-import-form" class="form-grid" novalidate>
       <label for="provider-import-provider">供应商<select id="provider-import-provider" name="provider"><option value="tushare">Tushare</option><option value="ifind">iFinD</option></select></label>
       <label for="provider-import-date">交易日期<input id="provider-import-date" name="business_date" type="date" required></label>
       <label for="provider-import-scope">范围<select id="provider-import-scope" name="scope"><option value="pilot">pilot</option><option value="full">full</option></select></label>
-      <div class="wide actions"><button id="provider-import-submit" class="primary" type="submit" disabled>提交供应商导入</button><span id="provider-queue-status" class="muted">队列状态：读取中…</span></div>
-      <div id="provider-import-confirmation" class="confirmation-summary wide" hidden aria-live="polite"><h3>确认提交供应商导入</h3><dl id="provider-import-confirmation-summary" class="definition-grid"></dl><p>预期影响：创建受服务端权限、幂等、队列和质量门禁约束的导入任务；不会在浏览器中读取或展示 Token。</p><div class="actions"><button id="provider-import-confirm" class="primary" type="button">确认提交</button></div></div>
+      <div class="wide actions"><button id="provider-import-submit" class="primary" type="submit" disabled>提交供应商导入</button><span id="provider-queue-status" class="muted">执行方式：读取中…</span></div>
+      <div id="provider-import-confirmation" class="confirmation-summary wide" hidden aria-live="polite"><h3>确认提交供应商导入</h3><dl id="provider-import-confirmation-summary" class="definition-grid"></dl><p>预期影响：创建受服务端权限、幂等、执行模式和质量门禁约束的导入任务；不会在浏览器中读取或展示 Token。</p><div class="actions"><button id="provider-import-confirm" class="primary" type="button">确认提交</button></div></div>
     </form>
     <div id="provider-import-state" class="state" role="status">选择供应商和交易日期后提交 pilot 导入。</div>
     <dl id="provider-import-result" class="definition-grid"></dl>
@@ -42,4 +42,4 @@
   <section class="panel"><h2>导入结果</h2><div id="data-import-state" class="state" role="status">填写文件与授权信息后开始导入。</div><dl id="data-import-result" class="definition-grid"></dl><div id="data-import-links" class="actions" hidden></div><h3>质量错误与警告</h3><ul id="data-import-issues"><li>尚未执行导入。</li></ul></section>
 </section>
 {% endblock %}
-{% block scripts %}<script src="/static/js/data_import.js?v=data-import-tabs-20260918-1" defer></script>{% endblock %}
+{% block scripts %}<script src="/static/js/data_import.js?v=provider-execution-20260919-1" defer></script>{% endblock %}

@@ -22,6 +22,41 @@ def test_load_settings_uses_quantitative_guardrail_defaults() -> None:
     assert settings.partial_fill_mode == "FULL_OR_NONE"
     assert settings.ifind_full_enabled is False
     assert settings.job_queue_stale_after_seconds == 300
+    assert settings.provider_import_execution == "rq"
+
+
+def test_background_provider_execution_is_limited_to_local_environments() -> None:
+    for app_env in ("development", "test"):
+        settings = load_settings(
+            {
+                "APP_ENV": app_env,
+                "AUTH_SECRET_KEY": "test-secret-that-is-long-enough!",
+                "PROVIDER_IMPORT_EXECUTION": "background",
+            }
+        )
+        assert settings.provider_import_execution == "background"
+
+    for app_env in ("simulation", "production"):
+        with pytest.raises(ConfigurationError, match="only allowed"):
+            load_settings(
+                {
+                    "APP_ENV": app_env,
+                    "AUTH_SECRET_KEY": "production-secret-that-is-long-enough",
+                    "DATABASE_URL": "postgresql://localhost/money",
+                    "PROVIDER_IMPORT_EXECUTION": "background",
+                }
+            )
+
+
+def test_invalid_provider_execution_mode_is_rejected() -> None:
+    with pytest.raises(ConfigurationError, match="must be rq or background"):
+        load_settings(
+            {
+                "APP_ENV": "test",
+                "AUTH_SECRET_KEY": "test-secret-that-is-long-enough!",
+                "PROVIDER_IMPORT_EXECUTION": "inline",
+            }
+        )
 
 
 def test_load_settings_reads_project_env_file_with_environment_precedence(

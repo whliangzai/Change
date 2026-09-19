@@ -1,12 +1,15 @@
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from threading import Event
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import load_settings
 from app.core.errors import DependencyError
 from app.core.security import LocalAccount, PasswordHasher, Role
+from app.jobs.tasks import import_ifind_data, import_tushare_data
 from app.main import create_app
 
 
@@ -58,6 +61,194 @@ def test_capabilities_are_admin_only_and_never_return_provider_secrets() -> None
     assert response.json()["data"]["ifind"]["full_open"] is False
     assert "deployment-tushare-token" not in response.text
     assert "deployment-ifind-token" not in response.text
+
+
+def test_background_capabilities_use_execution_readiness_without_queue() -> None:
+    hasher = PasswordHasher()
+    accounts = {"admin": LocalAccount(uuid4(), "admin", hasher.hash("pw"), frozenset({Role.ADMIN}))}
+    settings = load_settings(
+        {
+            "APP_ENV": "test",
+            "AUTH_SECRET_KEY": "test-secret-that-is-long-enough!",
+            "PROVIDER_IMPORT_EXECUTION": "background",
+        }
+    )
+    app = create_app(
+        settings=settings,
+        accounts=accounts,
+        readiness_checks={
+            "database": lambda: True,
+            "queue": lambda: (_ for _ in ()).throw(RuntimeError()),
+        },
+    )
+
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/v1/auth/login",
+            headers={"Idempotency-Key": "background-capability-login"},
+            json={"username": "admin", "password": "pw"},
+        ).json()["data"]["access_token"]
+        response = client.get(
+            "/api/v1/admin/data-imports/capabilities",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        readiness = client.get("/api/v1/health/readiness")
+
+    data = response.json()["data"]
+    assert data["execution"] == {"mode": "background", "available": True}
+    assert data["queue"] == {"required": False, "available": None}
+    assert data["queue_available"] is False
+    assert readiness.json()["data"]["checks"] == {
+        "database": "ok",
+        "provider_execution": "ok",
+    }
+
+
+@pytest.mark.parametrize("provider", ["tushare", "ifind"])
+def test_background_submission_returns_before_task_finishes_and_reaches_terminal(
+    monkeypatch: pytest.MonkeyPatch, provider: str
+) -> None:
+    hasher = PasswordHasher()
+    accounts = {"admin": LocalAccount(uuid4(), "admin", hasher.hash("pw"), frozenset({Role.ADMIN}))}
+    settings = load_settings(
+        {
+            "APP_ENV": "test",
+            "AUTH_SECRET_KEY": "test-secret-that-is-long-enough!",
+            "PROVIDER_IMPORT_EXECUTION": "background",
+            "TUSHARE_ENABLED": "true",
+            "TUSHARE_TOKEN": "deployment-tushare-token",
+            "IFIND_ENABLED": "true",
+            "IFIND_REFRESH_TOKEN": "deployment-ifind-token",
+        }
+    )
+    app = create_app(settings=settings, accounts=accounts)
+    started = Event()
+    release = Event()
+
+    def run_in_background(business_date, scope, owner_id=None):
+        started.set()
+        release.wait(2)
+        importer = import_tushare_data if provider == "tushare" else import_ifind_data
+        return importer(
+            date.fromisoformat(str(business_date)),
+            lambda **_: {"quality_status": "AVAILABLE"},
+            scope=scope,
+            run_store=app.state.job_run_store,
+            audit_writer=app.state.audit_writer,
+        )
+
+    monkeypatch.setattr(f"app.api.v1.admin.run_{provider}_import", run_in_background)
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/v1/auth/login",
+            headers={"Idempotency-Key": "background-submit-login"},
+            json={"username": "admin", "password": "pw"},
+        ).json()["data"]["access_token"]
+        response = client.post(
+            f"/api/v1/admin/data-imports/{provider}/2025-01-02?scope=pilot",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": "background-submit",
+            },
+        )
+        assert response.status_code == 202
+        assert started.wait(1)
+        assert response.json()["data"]["status"] in {"QUEUED", "RUNNING"}
+        release.set()
+        job_id = response.json()["data"]["job_id"]
+        for _ in range(100):
+            detail = client.get(
+                f"/api/v1/jobs/{job_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if detail.json()["data"]["status"] == "SUCCEEDED":
+                break
+        assert detail.json()["data"]["status"] == "SUCCEEDED"
+        dispatch_events = [
+            event
+            for event in app.state.audit_writer.events
+            if event.action == f"{provider.upper()}_IMPORT_DISPATCH"
+        ]
+        assert len(dispatch_events) == 1
+        assert dispatch_events[0].after_summary["execution_mode"] == "background"
+
+
+def test_background_entry_point_failure_does_not_leave_job_queued(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hasher = PasswordHasher()
+    accounts = {"admin": LocalAccount(uuid4(), "admin", hasher.hash("pw"), frozenset({Role.ADMIN}))}
+    settings = load_settings(
+        {
+            "APP_ENV": "test",
+            "AUTH_SECRET_KEY": "test-secret-that-is-long-enough!",
+            "PROVIDER_IMPORT_EXECUTION": "background",
+            "TUSHARE_ENABLED": "true",
+            "TUSHARE_TOKEN": "deployment-tushare-token",
+        }
+    )
+    app = create_app(settings=settings, accounts=accounts)
+
+    def fail_before_task_claim(*_args, **_kwargs):
+        raise RuntimeError("token=must-not-be-persisted raw-provider-response")
+
+    monkeypatch.setattr("app.api.v1.admin.run_tushare_import", fail_before_task_claim)
+    with TestClient(app) as client:
+        token = client.post(
+            "/api/v1/auth/login",
+            headers={"Idempotency-Key": "background-failure-login"},
+            json={"username": "admin", "password": "pw"},
+        ).json()["data"]["access_token"]
+        submitted = client.post(
+            "/api/v1/admin/data-imports/tushare/2025-01-04?scope=pilot",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": "background-entry-failure",
+            },
+        )
+        job_id = submitted.json()["data"]["job_id"]
+        for _ in range(100):
+            detail = client.get(
+                f"/api/v1/jobs/{job_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if detail.json()["data"]["status"] == "FAILED":
+                break
+
+    assert submitted.status_code == 202
+    assert detail.json()["data"]["status"] == "FAILED"
+    assert detail.json()["data"]["error_summary"] == (
+        "RuntimeError: background provider entry point failed"
+    )
+    assert "must-not-be-persisted" not in detail.text
+    assert "raw-provider-response" not in detail.text
+
+
+def test_background_startup_marks_abandoned_running_provider_job_retryable() -> None:
+    settings = load_settings(
+        {
+            "APP_ENV": "test",
+            "AUTH_SECRET_KEY": "test-secret-that-is-long-enough!",
+            "PROVIDER_IMPORT_EXECUTION": "background",
+        }
+    )
+    app = create_app(settings=settings)
+    queued = app.state.job_run_store.reserve_queued(
+        "data-import",
+        date(2025, 1, 2),
+        "data-import:2025-01-02:tushare-pilot",
+        phase="provider-import",
+    )
+    running = app.state.job_run_store.claim_queued(queued.idempotency_key, phase="provider-import")
+    assert running is not None
+
+    with TestClient(app):
+        recovered = app.state.job_run_store.get(running.run_id)
+
+    assert recovered is not None
+    assert recovered.status == "failed"
+    assert recovered.error_summary is not None
+    assert recovered.error_summary.startswith("DependencyError:")
 
 
 def test_provider_submission_persists_queued_job_and_supports_filters() -> None:
@@ -113,8 +304,7 @@ def test_queue_failure_is_persisted_and_dependency_failure_can_be_retried() -> N
     records, total = state.job_run_store.page(1, 50, status="FAILED")
     assert total == 1
     assert (
-        records[0].error_summary
-        == "DependencyError: Redis is unavailable at redis.internal:6379/0"
+        records[0].error_summary == "DependencyError: Redis is unavailable at redis.internal:6379/0"
     )
 
     state.tushare_enqueue = lambda function, *args, **kwargs: type(

@@ -11,6 +11,12 @@ validation-only evidence. Real
 provider credentials, external PostgreSQL/Redis, deployed workers, full-history backfill and
 production recovery exercises remain unverified; they are not replaced by local fixtures.
 
+Provider imports default to `PROVIDER_IMPORT_EXECUTION=rq`. For a single-process local
+development or test runtime, explicitly set `PROVIDER_IMPORT_EXECUTION=background` to run
+Tushare and iFinD imports on one application-managed worker thread without Redis/RQ. The
+background mode is rejected in simulation and production, waits for accepted work during app
+shutdown, and is not a durable cross-process scheduler.
+
 ## Local run
 
 Run every command below from the repository root with the shared virtual environment activated:
@@ -20,6 +26,7 @@ Run every command below from the repository root with the shared virtual environ
 $env:APP_ENV = "development"
 $env:AUTH_SECRET_KEY = "development-only-secret-change-me"
 $env:DATABASE_URL = "sqlite:///money-mvp.db"
+$env:PROVIDER_IMPORT_EXECUTION = "background"
 ```
 
 The application and worker also load an optional `.env` file from the repository root, so these

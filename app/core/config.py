@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 
 from dotenv import dotenv_values
@@ -22,9 +23,7 @@ _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 def _read_env_file() -> dict[str, str]:
     """Read the optional project-root .env without mutating process environment."""
     return {
-        key: value
-        for key, value in dotenv_values(_ENV_FILE).items()
-        if key and value is not None
+        key: value for key, value in dotenv_values(_ENV_FILE).items() if key and value is not None
     }
 
 
@@ -44,6 +43,7 @@ class Settings:
     partial_fill_mode: str
     database_url: str
     database_backend: str = "sqlite"
+    provider_import_execution: Literal["rq", "background"] = "rq"
     job_queue_stale_after_seconds: int = 300
     development_username: str | None = None
     development_password: str | None = None
@@ -83,6 +83,7 @@ _DEFAULTS: dict[str, str] = {
     "EXECUTION_PRICE_MODE": "NEXT_OPEN_ADJUSTED",
     "PARTIAL_FILL_MODE": "FULL_OR_NONE",
     "DATABASE_URL": "sqlite:///./money-mvp.db",
+    "PROVIDER_IMPORT_EXECUTION": "rq",
     "JOB_QUEUE_STALE_AFTER_SECONDS": "300",
     "IFIND_ENABLED": "false",
     "IFIND_FULL_ENABLED": "false",
@@ -151,7 +152,7 @@ def load_settings(overrides: Mapping[str, str] | None = None) -> Settings:
     if not secret:
         raise ConfigurationError("AUTH_SECRET_KEY must be configured")
     if app_env not in {"development", "test"} and (
-            len(secret) < 32 or secret == "development-only-secret-change-me"
+        len(secret) < 32 or secret == "development-only-secret-change-me"
     ):
         raise ConfigurationError(
             "AUTH_SECRET_KEY must be at least 32 characters outside development"
@@ -167,6 +168,13 @@ def load_settings(overrides: Mapping[str, str] | None = None) -> Settings:
         raise ConfigurationError("DATABASE_URL must use SQLite or PostgreSQL")
     if app_env in {"production", "simulation"} and database_backend != "postgresql":
         raise ConfigurationError("production and simulation runtimes require PostgreSQL")
+    provider_import_execution = values["PROVIDER_IMPORT_EXECUTION"].strip().lower()
+    if provider_import_execution not in {"rq", "background"}:
+        raise ConfigurationError("PROVIDER_IMPORT_EXECUTION must be rq or background")
+    if provider_import_execution == "background" and app_env in {"production", "simulation"}:
+        raise ConfigurationError(
+            "PROVIDER_IMPORT_EXECUTION=background is only allowed in development or test"
+        )
     try:
         data_history_start = date.fromisoformat(values["DATA_HISTORY_START"])
         max_positions = int(values["MAX_POSITIONS"])
@@ -269,6 +277,7 @@ def load_settings(overrides: Mapping[str, str] | None = None) -> Settings:
         partial_fill_mode=values["PARTIAL_FILL_MODE"],
         database_url=database_url,
         database_backend=database_backend,
+        provider_import_execution=provider_import_execution,  # type: ignore[arg-type]
         job_queue_stale_after_seconds=job_queue_stale_after_seconds,
         development_username=(
             values.get("DEVELOPMENT_USERNAME", "").strip() or "admin"

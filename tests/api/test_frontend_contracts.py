@@ -145,7 +145,7 @@ def test_shared_state_hides_internal_request_ids_and_keeps_page_contracts() -> N
     assert 'role="tab"' in import_page
     assert 'aria-controls="provider-import-panel"' in import_page
     assert 'aria-controls="local-import-panel"' in import_page
-    assert "/static/js/data_import.js?v=data-import-tabs-20260918-1" in import_page
+    assert "/static/js/data_import.js?v=provider-execution-20260919-1" in import_page
     assert "质量门禁通过的本地文件、Tushare 或 iFinD 批次均可用于后续研究" in import_page
     assert "仅完整 Tushare 主批次可用于后续研究" not in import_page
     assert 'id="report-metrics-table"' in report_page

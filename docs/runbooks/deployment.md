@@ -6,6 +6,10 @@
 4. Confirm app is reachable only on `127.0.0.1`, `/health` is healthy, RQ can reach Redis, and no container has broker credentials or order-submit routes.
 5. Run a dry-run import and daily report, inspect the data version, quality result, run number, and audit summary, then enable normal scheduling.
 
+Production and simulation deployments must use `PROVIDER_IMPORT_EXECUTION=rq`. The
+`background` option is restricted to development/test and is not a replacement for the durable
+Redis/RQ worker topology.
+
 Rollback: stop app/worker, pin the last known-good image, start it against the same immutable data volumes, and run a read-only health and manifest verification. Do not reset migrations or overwrite artifacts. If a schema rollback is required, use a forward-compatible migration or restore a database backup under change control.
 
 Recovery objectives are RPO ≤1 hour and RTO ≤4 hours. Hourly backups must include PostgreSQL dumps, Parquet artifacts, and manifests; `scripts/restore_check.py` validates a backup before a human-approved restore.

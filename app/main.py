@@ -2,7 +2,9 @@
 
 import json
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -51,6 +53,7 @@ from app.infrastructure.repositories.runtime import (
     SqlAlchemySessionRegistry,
 )
 from app.jobs.idempotency import InMemoryJobRunStore, JobRunStore
+from app.jobs.provider_execution import BackgroundProviderDispatcher
 from app.jobs.queue import QueueSettings, redis_connection
 
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}\Z")
@@ -103,15 +106,33 @@ def create_app(
 ) -> FastAPI:
     """Build an application with replaceable process-local adapters for testing."""
     runtime_settings = settings or load_settings()
-    app = FastAPI(title="A-share Quantitative Validation", version="0.1.0")
+    provider_dispatcher = BackgroundProviderDispatcher(
+        on_failure=lambda job_id, error: _fail_background_provider_job(app, job_id, error)
+    )
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        if runtime_settings.provider_import_execution == "background":
+            _fail_abandoned_provider_jobs(application)
+            provider_dispatcher.start()
+        try:
+            yield
+        finally:
+            if runtime_settings.provider_import_execution == "background":
+                provider_dispatcher.shutdown()
+
+    app = FastAPI(title="A-share Quantitative Validation", version="0.1.0", lifespan=lifespan)
     static_dir = Path(__file__).resolve().parents[1] / "static"
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     app.state.settings = runtime_settings
-    app.state.readiness_checks = readiness_checks or {
-        "database": lambda: True,
-        "queue": lambda: True,
-    }
+    app.state.provider_execution = provider_dispatcher
+    app.state.readiness_checks = dict(readiness_checks or {"database": lambda: True})
+    if runtime_settings.provider_import_execution == "background":
+        app.state.readiness_checks.pop("queue", None)
+        app.state.readiness_checks["provider_execution"] = lambda: provider_dispatcher.available
+    else:
+        app.state.readiness_checks.setdefault("queue", lambda: True)
     session_registry: SessionRegistry = InMemorySessionRegistry()
     job_run_store: JobRunStore = InMemoryJobRunStore()
     account_directory: Any = None
@@ -126,10 +147,13 @@ def create_app(
     else:
         engine = make_engine(runtime_settings.database_url)
         if readiness_checks is None:
-            app.state.readiness_checks = {
-                "database": lambda: database_is_ready(engine),
-                "queue": lambda: _redis_is_ready(),
-            }
+            app.state.readiness_checks = {"database": lambda: database_is_ready(engine)}
+            if runtime_settings.provider_import_execution == "background":
+                app.state.readiness_checks["provider_execution"] = lambda: (
+                    provider_dispatcher.available
+                )
+            else:
+                app.state.readiness_checks["queue"] = lambda: _redis_is_ready()
         app.state.repository = SqlAlchemyResearchRepository.from_engine(
             engine,
             create_schema=runtime_settings.app_env == "development",
@@ -309,3 +333,75 @@ def _redis_is_ready() -> bool:
     except Exception:
         return False
     return True
+
+
+def _fail_abandoned_provider_jobs(app: FastAPI) -> None:
+    """Make process-local RUNNING imports explicitly retryable after a restart."""
+    store = app.state.job_run_store
+    for provider in ("tushare", "ifind"):
+        while True:
+            records, _ = store.page(1, 200, status="RUNNING", provider=provider)
+            if not records:
+                break
+            for record in records:
+                failed = replace(
+                    record,
+                    status="failed",
+                    error_summary=(
+                        "DependencyError: application process stopped before provider import completed"
+                    ),
+                    finished_at=datetime.now(UTC),
+                )
+                store.replace(failed)
+                app.state.audit_writer.append(
+                    AuditEvent(
+                        occurred_at=failed.finished_at or datetime.now(UTC),
+                        actor_id=None,
+                        actor_roles=("SYSTEM",),
+                        action="PROVIDER_IMPORT_ABANDONED",
+                        object_type="job_run",
+                        object_id=failed.run_id,
+                        request_id="startup",
+                        result="FAILURE",
+                        after_summary={
+                            "task_key": failed.idempotency_key,
+                            "job_id": failed.run_id,
+                            "status": "FAILED",
+                        },
+                    )
+                )
+
+
+def _fail_background_provider_job(app: FastAPI, job_id: str, error: BaseException) -> None:
+    """Persist entry-point failures that occur before the task state machine can claim a job."""
+    store = app.state.job_run_store
+    record = store.get(job_id)
+    if record is None or record.status not in {"queued", "running"}:
+        return
+    summary = f"{type(error).__name__}: background provider entry point failed"
+    failed = replace(
+        record,
+        status="failed",
+        error_summary=summary,
+        finished_at=datetime.now(UTC),
+    )
+    store.replace(failed)
+    app.state.audit_writer.append(
+        AuditEvent(
+            occurred_at=failed.finished_at or datetime.now(UTC),
+            actor_id=None,
+            actor_roles=("SYSTEM",),
+            action="PROVIDER_IMPORT_BACKGROUND_FAILURE",
+            object_type="job_run",
+            object_id=failed.run_id,
+            request_id=failed.run_id,
+            result="FAILURE",
+            after_summary={
+                "task_key": failed.idempotency_key,
+                "job_id": failed.run_id,
+                "status": "FAILED",
+                "execution_mode": "background",
+                "error_type": type(error).__name__,
+            },
+        )
+    )

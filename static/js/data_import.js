@@ -169,7 +169,9 @@
 
     const providerRenderState = (text, kind, requestId) => window.ResearchApp.renderState(providerState, kind || '', text, requestId);
     const capabilityFor = () => capabilities?.providers?.[providerSelect.value] || capabilities?.[providerSelect.value] || {};
-    const queueIsAvailable = () => Boolean(capabilities?.queue_available ?? capabilities?.queue?.available);
+    const executionIsAvailable = () => Boolean(capabilities?.execution?.available ?? capabilities?.queue_available ?? capabilities?.queue?.available);
+    const executionMode = () => capabilities?.execution?.mode || 'rq';
+    const executionLabel = () => executionMode() === 'background' ? '应用内后台执行，无需 Redis/RQ worker' : 'Redis/RQ worker';
     const statusKind = (status) => status === 'SUCCEEDED' ? 'success' : (status === 'FAILED' ? 'error' : (status === 'RUNNING' || status === 'QUEUED' ? 'loading' : 'unavailable'));
     const qualityFrom = (job) => job.quality_status || job.value?.quality_status || '--';
     const setProviderConfirmationMode = (enabled) => {
@@ -186,19 +188,19 @@
       if (!fullOpen && providerScope.value === 'full') providerScope.value = 'pilot';
       providerFullReason.textContent = fullOpen ? '' : (capability.full_reason || 'full 未开放；请先完成 pilot 审核并显式启用门禁。');
       providerFullReason.hidden = fullOpen;
-      providerQueue.textContent = `队列状态：${queueIsAvailable() ? '可用' : '不可用，请检查 readiness、Redis 和 worker。'}`;
-      providerSubmit.disabled = !admin || providerSubmitting || providerJobActive || !capability.enabled || !queueIsAvailable();
+      providerQueue.textContent = `执行方式：${executionLabel()}；${executionIsAvailable() ? '可用' : '不可用'}`;
+      providerSubmit.disabled = !admin || providerSubmitting || providerJobActive || !capability.enabled || !executionIsAvailable();
     }
 
     function renderProviderCapabilities(payload, requestId) {
       capabilities = payload.data || {};
-      const queueAvailable = queueIsAvailable();
+      const executionAvailable = executionIsAvailable();
       const enabled = Object.entries(capabilities.providers || {}).filter(([, value]) => value.enabled).map(([name]) => name);
-      providerCapabilities.textContent = `供应商状态：${enabled.length ? enabled.join('、') + ' 已启用' : '当前没有启用的供应商'}；队列${queueAvailable ? '可用' : '不可用'}。`;
-      providerCapabilities.className = `state ${queueAvailable && enabled.length ? 'success' : 'unavailable'}`;
+      providerCapabilities.textContent = `供应商状态：${enabled.length ? enabled.join('、') + ' 已启用' : '当前没有启用的供应商'}；${executionLabel()}${executionAvailable ? '可用' : '不可用'}。`;
+      providerCapabilities.className = `state ${executionAvailable && enabled.length ? 'success' : 'unavailable'}`;
       updateProviderControls();
       if (!admin) providerRenderState('当前会话不是管理员，服务端将拒绝供应商导入。', 'permission', requestId);
-      else if (!queueAvailable) providerRenderState('队列不可用；任务提交会保留失败证据，恢复 Redis/worker 后可从管理页重试。', 'unavailable', requestId);
+      else if (!executionAvailable) providerRenderState(executionMode() === 'background' ? '应用内后台执行不可用；任务提交会保留失败证据，请重启开发应用后从管理页重试。' : '队列不可用；任务提交会保留失败证据，恢复 Redis/worker 后可从管理页重试。', 'unavailable', requestId);
       else if (!enabled.length) providerRenderState('没有启用的供应商；请由部署人员配置供应商开关和部署凭证。', 'unavailable', requestId);
       else providerRenderState('选择供应商、交易日期和范围后提交 pilot 导入。', '', requestId);
     }
@@ -245,7 +247,7 @@
       stopProviderPolling(); providerRefresh.hidden = false;
       providerLinks.replaceChildren();
       const recoverLink = document.createElement('a'); recoverLink.className = 'button-link'; recoverLink.href = `/admin?job_id=${encodeURIComponent(providerJobId || '')}`; recoverLink.textContent = '前往管理页查看任务'; providerLinks.append(recoverLink); providerLinks.hidden = false;
-      providerRenderState(`任务 ${providerJobId} 仍在队列中，页面轮询已超时；请确认 worker 正在运行后手动刷新。`, 'unavailable');
+      providerRenderState(`任务 ${providerJobId} 尚未进入终态，页面轮询已超时；请检查${executionMode() === 'background' ? '应用内后台执行状态' : ' Redis/RQ worker'}后手动刷新。`, 'unavailable');
     }
 
     async function refreshProviderJob() {
@@ -307,7 +309,7 @@
         providerCapabilities.textContent = `供应商能力读取失败：${window.ResearchApp.errorMessage(error.status, error.payload)}`;
         providerCapabilities.className = `state ${error.status === 403 ? 'permission' : 'unavailable'}`;
         providerSubmit.disabled = true;
-        providerRenderState('无法确认供应商或队列状态；请刷新页面，服务端不会在未知配置下猜测或切换主源。', error.status === 403 ? 'permission' : 'unavailable', error.payload?.request_id);
+        providerRenderState('无法确认供应商或执行器状态；请刷新页面，服务端不会在未知配置下猜测或切换主源。', error.status === 403 ? 'permission' : 'unavailable', error.payload?.request_id);
       }
     }
 
@@ -317,7 +319,7 @@
     async function submitProviderImport() {
       const values = providerPendingValues;
       if (!values || providerSubmitting) return;
-      providerSubmitting = true; providerSubmit.disabled = true; $('#provider-import-confirm').disabled = true; providerSubmit.textContent = '正在提交…'; providerRenderState('正在建立持久化 queued 任务并提交队列；请勿重复提交。', 'loading');
+      providerSubmitting = true; providerSubmit.disabled = true; $('#provider-import-confirm').disabled = true; providerSubmit.textContent = '正在提交…'; providerRenderState('正在建立持久化 queued 任务并提交执行器；请勿重复提交。', 'loading');
       try {
         const payload = await request(`/api/v1/admin/data-imports/${encodeURIComponent(values.provider)}/${encodeURIComponent(values.business_date)}?scope=${encodeURIComponent(values.scope)}`, { method: 'POST' });
         const job = payload.data || {}; startProviderPolling(job.job_id || job.id, payload.request_id); setProviderConfirmationMode(false); providerPendingValues = null;
@@ -333,10 +335,10 @@
       const capability = capabilityFor();
       const businessDate = String(providerDate.value || '').trim();
       if (!businessDate) { providerRenderState('请选择交易日期。', 'error'); providerDate.focus(); return; }
-      if (!capability.enabled || !queueIsAvailable()) { providerRenderState('供应商或队列当前不可用，任务尚未提交。', 'unavailable'); return; }
+      if (!capability.enabled || !executionIsAvailable()) { providerRenderState('供应商或执行器当前不可用，任务尚未提交。', 'unavailable'); return; }
       if (providerScope.value === 'full' && !(capability.full_open ?? capability.full_enabled)) { providerRenderState(capability.full_reason || 'full 未开放。', 'unavailable'); return; }
       providerPendingValues = { provider: providerSelect.value, business_date: businessDate, scope: providerScope.value };
-      const summary = $('#provider-import-confirmation-summary'); appendSummary(summary, [['对象', '供应商行情导入'], ['供应商 / 范围', `${providerPendingValues.provider} / ${providerPendingValues.scope}`], ['交易日期', providerPendingValues.business_date], ['队列', '服务端持久化任务；随后由 worker 执行']]);
+      const summary = $('#provider-import-confirmation-summary'); appendSummary(summary, [['对象', '供应商行情导入'], ['供应商 / 范围', `${providerPendingValues.provider} / ${providerPendingValues.scope}`], ['交易日期', providerPendingValues.business_date], ['执行方式', executionLabel()]]);
       setProviderConfirmationMode(true); providerRenderState('请核对摘要；点击“确认提交”后才会创建供应商任务。', 'warning');
     });
     $('#provider-import-confirm').addEventListener('click', submitProviderImport);
