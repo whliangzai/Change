@@ -1,16 +1,19 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 from app.core.config import load_settings
 from app.core.security import LocalAccount, PasswordHasher, Role
+from app.infrastructure.db import models
 from app.infrastructure.repositories.research import SqlAlchemyResearchRepository
 from app.main import create_app
 
 
-def _bar(trade_date: date) -> dict[str, str]:
+def _bar(trade_date: date) -> dict[str, object]:
     return {
         "symbol": "600000.SH",
         "trade_date": trade_date.isoformat(),
@@ -19,13 +22,15 @@ def _bar(trade_date: date) -> dict[str, str]:
         "low": "9.90",
         "close": "10.10",
         "volume": "10000",
-        "amount": "101000.00",
+        "amount": "30000000.00",
         "adjustment_factor": "1.0",
         "available_at": f"{trade_date.isoformat()}T18:00:00+00:00",
+        "limit_up": False,
+        "limit_down": False,
     }
 
 
-def _benchmark_bar(trade_date: date) -> dict[str, str]:
+def _benchmark_bar(trade_date: date) -> dict[str, object]:
     return {
         "symbol": "000300.SH",
         "trade_date": trade_date.isoformat(),
@@ -37,12 +42,14 @@ def _benchmark_bar(trade_date: date) -> dict[str, str]:
         "amount": "101000.00",
         "adjustment_factor": "1.0",
         "available_at": f"{trade_date.isoformat()}T18:00:00+00:00",
+        "limit_up": False,
+        "limit_down": False,
     }
 
 
 def _trend_bar(
-    symbol: str, trade_date: date, close: Decimal, amount: str = "100000"
-) -> dict[str, str]:
+    symbol: str, trade_date: date, close: Decimal, amount: str = "30000000"
+) -> dict[str, object]:
     return {
         "symbol": symbol,
         "trade_date": trade_date.isoformat(),
@@ -54,7 +61,24 @@ def _trend_bar(
         "amount": amount,
         "adjustment_factor": "1.0",
         "available_at": f"{trade_date.isoformat()}T18:00:00+00:00",
+        "limit_up": False,
+        "limit_down": False,
     }
+
+
+def _history_dates(end: date, count: int = 90) -> tuple[date, ...]:
+    return tuple(end - timedelta(days=offset) for offset in range(count - 1, -1, -1))
+
+
+def _seed_calendar(database_url: str, dates: tuple[date, ...]) -> None:
+    engine = create_engine(database_url)
+    with Session(engine) as session:
+        session.add_all(
+            models.TradeCalendar(exchange="SSE", trade_date=trade_date, is_open=True)
+            for trade_date in dates
+        )
+        session.commit()
+    engine.dispose()
 
 
 def test_development_api_executes_persisted_backtest_with_real_runner(tmp_path) -> None:
@@ -73,6 +97,8 @@ def test_development_api_executes_persisted_backtest_with_real_runner(tmp_path) 
         }
     )
     app = create_app(settings=settings, accounts={"user": account})
+    dates = _history_dates(date(2026, 9, 5))
+    _seed_calendar(settings.database_url, dates)
     batch = app.state.repository.import_daily_bars(
         owner_id,
         {
@@ -81,11 +107,7 @@ def test_development_api_executes_persisted_backtest_with_real_runner(tmp_path) 
             "file_location": "data/bars.csv",
             "license_note": "licensed",
         },
-        [
-            item
-            for day in range(1, 6)
-            for item in (_bar(date(2026, 9, day)), _benchmark_bar(date(2026, 9, day)))
-        ],
+        [item for trade_date in dates for item in (_bar(trade_date), _benchmark_bar(trade_date))],
     )
     strategy = app.state.repository.create_strategy(
         owner_id, {"name": "trend", "parameters": {}, "change_reason": "initial"}
@@ -107,7 +129,7 @@ def test_development_api_executes_persisted_backtest_with_real_runner(tmp_path) 
             "data_batch_id": batch["batch_id"],
             "strategy_version_id": strategy["strategy_version_id"],
             "cost_config_id": "cost_v1",
-            "rule_config_id": "rule_v1",
+            "rule_config_id": "rule_v2",
             "start_date": "2026-09-01",
             "end_date": "2026-09-05",
             "train_end": "2026-09-02",
@@ -161,11 +183,12 @@ def test_persisted_backtest_generates_causal_strategy_trades(tmp_path) -> None:
         }
     )
     app = create_app(settings=settings, accounts={"user": account})
-    rows: list[dict[str, str]] = []
-    for day in range(1, 27):
-        trade_date = date(2026, 9, day)
-        rows.append(_trend_bar("600000.SH", trade_date, Decimal("10") + Decimal(day) / 10))
-        rows.append(_trend_bar("000300.SH", trade_date, Decimal("100") + Decimal(day)))
+    dates = _history_dates(date(2026, 9, 26))
+    _seed_calendar(settings.database_url, dates)
+    rows: list[dict[str, object]] = []
+    for index, trade_date in enumerate(dates, start=1):
+        rows.append(_trend_bar("600000.SH", trade_date, Decimal("10") + Decimal(index) / 10))
+        rows.append(_trend_bar("000300.SH", trade_date, Decimal("100") + Decimal(index)))
     batch = app.state.repository.import_daily_bars(
         owner_id,
         {
@@ -201,7 +224,7 @@ def test_persisted_backtest_generates_causal_strategy_trades(tmp_path) -> None:
             "data_batch_id": batch["batch_id"],
             "strategy_version_id": strategy["strategy_version_id"],
             "cost_config_id": "cost_v1",
-            "rule_config_id": "rule_v1",
+            "rule_config_id": "rule_v2",
             "start_date": "2026-09-01",
             "end_date": "2026-09-26",
             "train_end": "2026-09-10",

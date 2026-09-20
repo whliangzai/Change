@@ -7,6 +7,7 @@ from app.schemas.common import MoneyString
 
 class BacktestCreate(BaseModel):
     data_batch_id: str = Field(min_length=1)
+    data_batch_ids: list[str] | None = Field(default=None, min_length=1)
     strategy_version_id: str = Field(min_length=1)
     cost_config_id: str = Field(min_length=1)
     rule_config_id: str = Field(min_length=1)
@@ -23,4 +24,9 @@ class BacktestCreate(BaseModel):
     def validate_split(self) -> "BacktestCreate":
         if not self.start_date <= self.train_end < self.valid_end < self.oos_start <= self.end_date:
             raise ValueError("invalid train/validation/out-of-sample date split")
+        if self.data_batch_ids is not None:
+            if self.data_batch_ids[0] != self.data_batch_id:
+                raise ValueError("data_batch_ids must start with data_batch_id")
+            if len(set(self.data_batch_ids)) != len(self.data_batch_ids):
+                raise ValueError("data_batch_ids cannot contain duplicates")
         return self

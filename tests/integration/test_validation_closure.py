@@ -1,5 +1,5 @@
 from csv import DictReader
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
@@ -31,7 +31,22 @@ def _bar(symbol: str, trade_date: date, close: Decimal) -> dict[str, str]:
         "amount": "100000",
         "adjustment_factor": "1.0",
         "available_at": f"{trade_date.isoformat()}T18:00:00+00:00",
+        "open_limit_up": "false",
+        "open_limit_down": "false",
+        "close_limit_up": "false",
+        "close_limit_down": "false",
     }
+
+
+def _seed_trade_calendar(engine, dates: list[date]) -> None:
+    first = min(dates)
+    warmup = [first - timedelta(days=offset) for offset in range(60, 0, -1)]
+    with Session(engine) as session:
+        session.add_all(
+            models.TradeCalendar(exchange="SSE", trade_date=trade_date, is_open=True)
+            for trade_date in (*warmup, *dates)
+        )
+        session.commit()
 
 
 def _published_strategy(repository: SqlAlchemyResearchRepository, owner_id):
@@ -290,6 +305,13 @@ def test_admin_can_complete_authorized_http_validation_closure(tmp_path, monkeyp
     token = login.json()["data"]["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     source = Path(__file__).parents[1] / "fixtures" / "authorized_simulated_daily_bars.csv"
+    with source.open(encoding="utf-8", newline="") as handle:
+        fixture_dates = sorted(
+            {date.fromisoformat(row["trade_date"]) for row in DictReader(handle)}
+        )
+    calendar_engine = create_engine(database_url)
+    _seed_trade_calendar(calendar_engine, fixture_dates)
+    calendar_engine.dispose()
     import_body = {
         "source_name": "authorized-http-fixture",
         "data_type": "DAILY_BAR",
@@ -412,11 +434,11 @@ def test_admin_can_complete_authorized_http_validation_closure(tmp_path, monkeyp
         "data_batch_id": batch_id,
         "strategy_version_id": strategy_id,
         "cost_config_id": "cost_v1",
-        "rule_config_id": "rule_v1",
-        "start_date": "2026-08-24",
-        "train_end": "2026-09-03",
-        "valid_end": "2026-09-10",
-        "oos_start": "2026-09-11",
+        "rule_config_id": "rule_v2",
+        "start_date": "2026-09-18",
+        "train_end": "2026-09-18",
+        "valid_end": "2026-09-19",
+        "oos_start": "2026-09-20",
         "end_date": "2026-09-21",
         "benchmark_symbol": "000300.SH",
         "initial_equity": "20000.00",
@@ -435,7 +457,8 @@ def test_admin_can_complete_authorized_http_validation_closure(tmp_path, monkeyp
     report_response = client.get(f"/api/v1/backtests/{run_id}/report", headers=headers)
     assert completed.status_code == 202
     assert report_response.status_code == 200
-    assert completed.json()["data"]["status"] == "SUCCEEDED"
+    completed_data = completed.json()["data"]
+    assert completed_data["status"] == "SUCCEEDED", completed_data.get("result_summary")
     events, _ = client.app.state.audit_writer.page(1, 100)
     actions = {event["action"] for event in events}
     assert {

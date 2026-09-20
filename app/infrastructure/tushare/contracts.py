@@ -123,6 +123,14 @@ DEFAULT_TUSHARE_CONTRACT = TushareFieldContract(
                 trade_date="trade_date",
                 adjustment_factor="adj_factor",
             ),
+            "price_limits": _dataset(
+                "price_limits",
+                "stk_limit",
+                security_code="ts_code",
+                trade_date="trade_date",
+                upper_limit="up_limit",
+                lower_limit="down_limit",
+            ),
             # stock_st is the dated authoritative ST list. Absent requested codes are non-ST.
             "historical_status": _dataset(
                 "historical_status",

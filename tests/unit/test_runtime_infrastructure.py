@@ -100,9 +100,7 @@ def test_redis_connection_pings_and_fails_closed(monkeypatch: pytest.MonkeyPatch
     fake_module = SimpleNamespace(Redis=FakeRedis, exceptions=SimpleNamespace(RedisError=()))
     monkeypatch.setattr("app.jobs.queue.importlib.import_module", lambda name: fake_module)
 
-    with pytest.raises(
-        DependencyError, match=r"Redis is unavailable at redis:6379/0"
-    ) as error:
+    with pytest.raises(DependencyError, match=r"Redis is unavailable at redis:6379/0") as error:
         redis_connection(QueueSettings(host="redis", port=6379))
 
     assert "password" not in str(error.value).lower()
@@ -115,7 +113,9 @@ def test_enqueue_translates_broker_write_failures(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr("app.jobs.queue.rq_queue", lambda _settings: FakeQueue())
 
-    with pytest.raises(DependencyError, match=r"Redis queue is unavailable \(RuntimeError\): broker write failed"):
+    with pytest.raises(
+        DependencyError, match=r"Redis queue is unavailable \(RuntimeError\): broker write failed"
+    ):
         enqueue(lambda: None, settings=QueueSettings(), job_id="job-1")
 
 

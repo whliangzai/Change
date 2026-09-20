@@ -47,11 +47,19 @@ class IFindRawArchive:
     ) -> ArtifactManifest:
         redacted_request = _redact(dict(request_body), self._secrets)
         redacted_response = _redact(response_json, self._secrets)
-        canonical_response = json.dumps(redacted_response, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        canonical_response = json.dumps(
+            redacted_response,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
         response_hash = hashlib.sha256(canonical_response.encode("utf-8")).hexdigest()
         row = {
             "interface_name": interface_name,
-            "request_json": json.dumps(redacted_request, ensure_ascii=False, sort_keys=True, default=str),
+            "request_json": json.dumps(
+                redacted_request, ensure_ascii=False, sort_keys=True, default=str
+            ),
             "http_status": http_status,
             "response_json": canonical_response,
             "pulled_at": (pulled_at or datetime.now(UTC)).astimezone(UTC).isoformat(),

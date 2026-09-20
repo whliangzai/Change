@@ -22,6 +22,10 @@ def _daily(code: str) -> dict[str, object]:
         "close": 10,
         "volume": 100,
         "amount": 1000,
+        "openLimitUp": False,
+        "openLimitDown": False,
+        "closeLimitUp": False,
+        "closeLimitDown": False,
     }
 
 
@@ -58,7 +62,9 @@ def test_retries_once_after_401_then_succeeds() -> None:
         nonlocal attempts
         if request.url.path.endswith("get_access_token"):
             attempts += 1
-            return httpx.Response(200, json={"access_token": f"access-{attempts}", "expires_in": 3600})
+            return httpx.Response(
+                200, json={"access_token": f"access-{attempts}", "expires_in": 3600}
+            )
         if attempts == 1:
             return httpx.Response(401, json={"message": "expired"})
         return httpx.Response(200, json={"data": [_daily("600000.SH")]})

@@ -38,7 +38,7 @@
   };
   const renderConfirmation = (values) => {
     const target = $('#backtest-confirmation-summary'); target.replaceChildren();
-    [['对象', '历史回测运行'], ['日期区间', `${values.start_date} 至 ${values.end_date}`], ['训练 / 验证 / 样本外', `${values.train_end} / ${values.valid_end} / ${values.oos_start}`], ['数据批次 / 策略版本', `${values.data_batch_id} / ${values.strategy_version_id}`], ['成本 / 规则 / 基准', `${values.cost_config_id} / ${values.rule_config_id} / ${values.benchmark_symbol}`], ['初始权益', values.initial_equity]].forEach(([label, value]) => { const term = document.createElement('dt'); term.textContent = label; const definition = document.createElement('dd'); definition.textContent = String(value ?? '--'); target.append(term, definition); });
+    [['对象', '历史回测运行'], ['日期区间', `${values.start_date} 至 ${values.end_date}`], ['训练 / 验证 / 样本外', `${values.train_end} / ${values.valid_end} / ${values.oos_start}`], ['数据批次', `${values.data_batch_ids?.length || 1} 个（首批 ${values.data_batch_id}）`], ['策略版本', values.strategy_version_id], ['成本 / 规则 / 基准', `${values.cost_config_id} / ${values.rule_config_id} / ${values.benchmark_symbol}`], ['初始权益', values.initial_equity]].forEach(([label, value]) => { const term = document.createElement('dt'); term.textContent = label; const definition = document.createElement('dd'); definition.textContent = String(value ?? '--'); target.append(term, definition); });
   };
   const setAvailability = () => { submit.disabled = isSubmitting || !hasAvailableBatch; };
   async function loadBatches() {
@@ -91,6 +91,9 @@
     if (confirming) { setConfirmationMode(false); pendingValues = null; state('已返回修改，尚未提交回测。', 'unavailable'); submit.focus(); return; }
     clearFieldErrors();
     const values = Object.fromEntries(new FormData(form).entries());
+    const additionalBatchIds = String(values.data_batch_ids_text || '').split(/[\s,]+/).filter(Boolean);
+    delete values.data_batch_ids_text;
+    if (additionalBatchIds.length) values.data_batch_ids = [values.data_batch_id, ...additionalBatchIds.filter((value) => value !== values.data_batch_id)];
     const dates = ['start_date', 'train_end', 'valid_end', 'oos_start', 'end_date'];
     if (dates.some((field) => !values[field])) {
       setFieldError('dates', '请完整填写日期区间。'); showFormError('请检查标记的日期字段后重试。'); return;

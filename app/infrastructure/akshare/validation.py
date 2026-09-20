@@ -122,7 +122,7 @@ class AKShareValidationClient:
         if self._module is not None:
             return self._module
         try:
-            import akshare  # type: ignore[import-not-found]
+            import akshare  # type: ignore[import-untyped]
         except ImportError as exc:
             raise RuntimeError("AKShare is not installed") from exc
         return akshare

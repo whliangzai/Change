@@ -5,6 +5,7 @@ from .all_models import (
     AuditEvent,
     AuthSession,
     BacktestRun,
+    BacktestSeriesPoint,
     CostConfigVersion,
     DailyBar,
     DailyReport,
@@ -37,6 +38,7 @@ from .all_models import (
 __all__ = [
     "AdjustmentFactor",
     "AuthSession",
+    "BacktestSeriesPoint",
     "AuditEvent",
     "BacktestRun",
     "CostConfigVersion",

@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID
 
 from app.core.errors import DataUnavailableError
+from app.domain.causality import available_at_or_before
 from app.domain.execution.costs import CostModel
 from app.domain.execution.simulator import MarketBar
 from app.domain.strategy.features import DailyBar, FeatureSnapshot, build_feature_snapshot
@@ -260,15 +261,7 @@ class DailyFlowApplicationService:
 
     @staticmethod
     def _visible(bar: MarketBar, request: DailyFlowRequest) -> bool:
-        available_at = bar.available_at
-        if available_at is None:
-            return False
-        cutoff = request.information_cutoff_at
-        if available_at.tzinfo is None and cutoff.tzinfo is not None:
-            available_at = available_at.replace(tzinfo=UTC)
-        if available_at.tzinfo is not None and cutoff.tzinfo is None:
-            cutoff = cutoff.replace(tzinfo=UTC)
-        return available_at <= cutoff
+        return available_at_or_before(bar.available_at, request.information_cutoff_at)
 
     @classmethod
     def _strategy_visible(cls, bar: DailyBar, request: DailyFlowRequest) -> bool:
@@ -299,7 +292,7 @@ class DailyFlowApplicationService:
             is_suspended=bar.is_suspended,
             is_st=bar.is_st,
             is_delisted=bar.is_delisted,
-            is_limit_up=bar.limit_up,
+            is_limit_up=bar.close_limit_up is not False,
             industry=bar.industry,
             list_date=bar.list_date,
         )

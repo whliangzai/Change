@@ -123,8 +123,8 @@ def test_authorized_csv_import_is_durable_and_queryable_after_app_restart(tmp_pa
             "data_type": "DAILY_BAR",
             "file_location": str(source),
             "license_note": "licensed",
-            "available_at": "2026-09-03T19:00:00+00:00",
-            "information_cutoff_at": "2026-09-03T18:00:00+00:00",
+            "available_at": "2026-09-03T18:00:00+00:00",
+            "information_cutoff_at": "2026-09-03T19:00:00+00:00",
             "version": "vendor-v1",
         },
     )

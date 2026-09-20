@@ -61,12 +61,12 @@ class IFindIngestionService:
         if calendar_row is None or not self._truth(self._pick(calendar_row, "is_open", "isOpen")):
             errors.append("trading calendar is missing or closed")
         security_master = self._fetch(
-            "security_master", start_date=trade_date, end_date=trade_date,
+            "security_master",
+            start_date=trade_date,
+            end_date=trade_date,
             extra={"business_date": trade_date.isoformat()},
         )
-        master_by_code = {
-            self._code(row): row for row in security_master if self._code(row)
-        }
+        master_by_code = {self._code(row): row for row in security_master if self._code(row)}
         codes = set(self.PILOT_CODES if scope == "pilot" else master_by_code)
         codes.update({"000300.SH", "000001.SH"})
         if not codes:
@@ -91,7 +91,11 @@ class IFindIngestionService:
             codes, master_by_code, bar_by_code, factor_by_code, status_by_code, industry_by_code
         )
         errors.extend(missing)
-        errors.extend(self._invalid_required_fields(codes, bar_by_code, factor_by_code, master_by_code, industry_by_code))
+        errors.extend(
+            self._invalid_required_fields(
+                codes, bar_by_code, factor_by_code, master_by_code, industry_by_code
+            )
+        )
 
         rows: list[dict[str, Any]] = []
         for code in sorted(codes):
@@ -117,7 +121,9 @@ class IFindIngestionService:
             adjusted_open = self._decimal(self._pick(bar, "adjusted_open")) or raw_open * multiplier
             adjusted_high = self._decimal(self._pick(bar, "adjusted_high")) or raw_high * multiplier
             adjusted_low = self._decimal(self._pick(bar, "adjusted_low")) or raw_low * multiplier
-            adjusted_close = self._decimal(self._pick(bar, "adjusted_close")) or raw_close * multiplier
+            adjusted_close = (
+                self._decimal(self._pick(bar, "adjusted_close")) or raw_close * multiplier
+            )
             rows.append(
                 {
                     "symbol": code,
@@ -135,9 +141,26 @@ class IFindIngestionService:
                     "adjust_factor": multiplier,
                     "available_at": self._available_at(trade_date),
                     "information_cutoff_at": self._cutoff_at(trade_date),
+                    "open_limit_up": self._explicit_bool(bar, "open_limit_up", "openLimitUp"),
+                    "open_limit_down": self._explicit_bool(bar, "open_limit_down", "openLimitDown"),
+                    "close_limit_up": self._explicit_bool(bar, "close_limit_up", "closeLimitUp"),
+                    "close_limit_down": self._explicit_bool(
+                        bar, "close_limit_down", "closeLimitDown"
+                    ),
+                    "limit_up": self._explicit_bool(bar, "close_limit_up", "closeLimitUp"),
+                    "limit_down": self._explicit_bool(bar, "close_limit_down", "closeLimitDown"),
                     "is_st": self._truth(self._pick(status, "is_st", "st_flag", "isST")),
-                    "is_suspended": self._truth(self._pick(status, "is_suspended", "suspended", "isSuspended")),
-                    "is_delist_period": self._truth(self._pick(status, "is_delist_period", "delisting_arrangement", "isDelistingArrange")),
+                    "is_suspended": self._truth(
+                        self._pick(status, "is_suspended", "suspended", "isSuspended")
+                    ),
+                    "is_delist_period": self._truth(
+                        self._pick(
+                            status,
+                            "is_delist_period",
+                            "delisting_arrangement",
+                            "isDelistingArrange",
+                        )
+                    ),
                     "listed_at": self._as_date(self._pick(master, "listed_at", "listedDate")),
                     "delisted_at": self._as_date(self._pick(master, "delisted_at", "delistedDate")),
                     "board": self._pick(master, "board"),
@@ -163,6 +186,8 @@ class IFindIngestionService:
             "file_hash": standardized.sha256,
             "actual_pulled_at": pulled_at.isoformat(),
             "mapping_version": self._mapping_version,
+            "adjustment_convention": "RAW_TIMES_ADJUST_FACTOR",
+            "field_convention": "DAILY_OHLCV_OPEN_CLOSE_LIMIT_V2",
             "provenance": {
                 "standardized_manifest_path": str(standardized.manifest_path),
                 "standardized_manifest_hash": standardized.sha256,
@@ -185,9 +210,15 @@ class IFindIngestionService:
             result = self._repository.import_ifind_batch(self._owner_id, payload, rows)
         else:
             result = self._repository.import_daily_bars(self._owner_id, payload, rows)
-        return {**result, "standardized_manifest": standardized.as_dict(), "pulled_at": pulled_at.isoformat()}
+        return {
+            **result,
+            "standardized_manifest": standardized.as_dict(),
+            "pulled_at": pulled_at.isoformat(),
+        }
 
-    def _fetch(self, dataset: str, codes: Iterable[str] | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    def _fetch(
+        self, dataset: str, codes: Iterable[str] | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         try:
             if hasattr(self._client, "fetch_dataset"):
                 result = self._client.fetch_dataset(dataset, codes, **kwargs)
@@ -203,9 +234,21 @@ class IFindIngestionService:
         return [dict(row) for row in (result or []) if isinstance(row, Mapping)]
 
     @classmethod
-    def _missing_requirements(cls, codes: set[str], *indexes: Mapping[str, Mapping[str, Any]]) -> list[str]:
-        labels = ("security master", "daily bars", "adjustment factors", "historical status", "industry membership")
-        return [f"{labels[i]} missing for {sorted(codes - set(index))}" for i, index in enumerate(indexes) if codes - set(index)]
+    def _missing_requirements(
+        cls, codes: set[str], *indexes: Mapping[str, Mapping[str, Any]]
+    ) -> list[str]:
+        labels = (
+            "security master",
+            "daily bars",
+            "adjustment factors",
+            "historical status",
+            "industry membership",
+        )
+        return [
+            f"{labels[i]} missing for {sorted(codes - set(index))}"
+            for i, index in enumerate(indexes)
+            if codes - set(index)
+        ]
 
     @classmethod
     def _invalid_required_fields(
@@ -222,6 +265,14 @@ class IFindIngestionService:
             for field in ("open", "high", "low", "close", "volume", "amount"):
                 if cls._pick(bar, field) is None:
                     errors.append(f"daily bars field {field} missing for {code}")
+            for normalized, provider in (
+                ("open_limit_up", "openLimitUp"),
+                ("open_limit_down", "openLimitDown"),
+                ("close_limit_up", "closeLimitUp"),
+                ("close_limit_down", "closeLimitDown"),
+            ):
+                if cls._pick(bar, normalized, provider) is None:
+                    errors.append(f"price limit evidence {normalized} missing for {code}")
             if cls._pick(factors.get(code, {}), "adjust_factor", "adjustment_factor", "af") is None:
                 errors.append(f"adjustment factor missing for {code}")
             master = masters.get(code, {})
@@ -252,7 +303,9 @@ class IFindIngestionService:
         return None
 
     @classmethod
-    def _find_calendar(cls, rows: Iterable[Mapping[str, Any]], trade_date: date) -> Mapping[str, Any] | None:
+    def _find_calendar(
+        cls, rows: Iterable[Mapping[str, Any]], trade_date: date
+    ) -> Mapping[str, Any] | None:
         for row in rows:
             value = cls._as_date(cls._pick(row, "trade_date", "business_date", "tradeDate"))
             if value == trade_date:
@@ -283,8 +336,13 @@ class IFindIngestionService:
         return value is True or str(value).lower() in {"true", "1", "yes", "y", "是"}
 
     @classmethod
+    def _explicit_bool(cls, row: Mapping[str, Any], *names: str) -> bool | None:
+        value = cls._pick(row, *names)
+        return None if value is None else cls._truth(value)
+
+    @classmethod
     def _cutoff_at(cls, trade_date: date) -> datetime:
-        return datetime.combine(trade_date, time(15, 0), cls.SHANGHAI)
+        return cls._available_at(trade_date)
 
     @classmethod
     def _available_at(cls, trade_date: date) -> datetime:
@@ -292,7 +350,16 @@ class IFindIngestionService:
 
     @staticmethod
     def _jsonable(row: Mapping[str, Any]) -> dict[str, Any]:
-        return {key: (value.isoformat() if isinstance(value, (datetime, date)) else str(value) if isinstance(value, Decimal) else value) for key, value in row.items()}
+        return {
+            key: (
+                value.isoformat()
+                if isinstance(value, (datetime, date))
+                else str(value)
+                if isinstance(value, Decimal)
+                else value
+            )
+            for key, value in row.items()
+        }
 
     def _raw_manifest_paths(self) -> list[str]:
         archive = getattr(self._client, "_raw_archive", None)

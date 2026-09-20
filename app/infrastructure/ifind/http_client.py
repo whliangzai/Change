@@ -73,7 +73,11 @@ class IFindHttpClient:
 
     def _access_token(self, *, force_refresh: bool = False) -> str:
         with self._token_lock:
-            if self._token is not None and not force_refresh and time.monotonic() < self._token_expiry:
+            if (
+                self._token is not None
+                and not force_refresh
+                and time.monotonic() < self._token_expiry
+            ):
                 return self._token
             try:
                 response = self._client.post(
@@ -172,7 +176,9 @@ class IFindHttpClient:
         extra: Mapping[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         code_list = list(codes or [])
-        chunks = [code_list[i : i + self._max_codes] for i in range(0, len(code_list), self._max_codes)]
+        chunks = [
+            code_list[i : i + self._max_codes] for i in range(0, len(code_list), self._max_codes)
+        ]
         if not chunks:
             chunks = [[]]
 
@@ -181,22 +187,34 @@ class IFindHttpClient:
             if chunk:
                 payload["thscode"] = chunk
             if start_date is not None:
-                payload["startdate"] = start_date.isoformat() if isinstance(start_date, date) else start_date
+                payload["startdate"] = (
+                    start_date.isoformat() if isinstance(start_date, date) else start_date
+                )
             if end_date is not None:
-                payload["enddate"] = end_date.isoformat() if isinstance(end_date, date) else end_date
+                payload["enddate"] = (
+                    end_date.isoformat() if isinstance(end_date, date) else end_date
+                )
             return self.request(dataset, payload)
 
         with ThreadPoolExecutor(max_workers=self._max_concurrency) as executor:
             pages = list(executor.map(fetch, chunks))
         return [row for page in pages for row in page]
 
-    def fetch_daily_bars(self, codes: Iterable[str], start_date: date | str, end_date: date | str) -> list[dict[str, Any]]:
+    def fetch_daily_bars(
+        self, codes: Iterable[str], start_date: date | str, end_date: date | str
+    ) -> list[dict[str, Any]]:
         return self.fetch_dataset("daily_bars", codes, start_date=start_date, end_date=end_date)
 
-    def fetch_adjustment_factors(self, codes: Iterable[str], start_date: date | str, end_date: date | str) -> list[dict[str, Any]]:
-        return self.fetch_dataset("adjustment_factors", codes, start_date=start_date, end_date=end_date)
+    def fetch_adjustment_factors(
+        self, codes: Iterable[str], start_date: date | str, end_date: date | str
+    ) -> list[dict[str, Any]]:
+        return self.fetch_dataset(
+            "adjustment_factors", codes, start_date=start_date, end_date=end_date
+        )
 
-    def fetch_trading_calendar(self, start_date: date | str, end_date: date | str) -> list[dict[str, Any]]:
+    def fetch_trading_calendar(
+        self, start_date: date | str, end_date: date | str
+    ) -> list[dict[str, Any]]:
         return self.fetch_dataset("trading_calendar", start_date=start_date, end_date=end_date)
 
 

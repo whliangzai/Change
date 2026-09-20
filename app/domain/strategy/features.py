@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 
+from app.domain.causality import available_at_or_before
+
 
 @dataclass(frozen=True, slots=True)
 class FeatureSnapshot:
@@ -64,9 +66,7 @@ def build_feature_snapshot(
     """
 
     def available(bar: DailyBar) -> bool:
-        return information_cutoff_at is None or (
-            bar.available_at is not None and bar.available_at <= information_cutoff_at
-        )
+        return available_at_or_before(bar.available_at, information_cutoff_at)
 
     stock = sorted(
         (

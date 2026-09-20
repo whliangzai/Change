@@ -3,36 +3,40 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from bisect import bisect_left, bisect_right
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from hashlib import sha256
+from statistics import median
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.v1.common import InMemoryResearchRepository
-from app.application.backtest_service import (
-    BacktestApplicationService,
-    BacktestDataSlice,
-    BacktestRequest,
-)
 from app.application.daily_flow_service import DailyFlowApplicationService, DailyFlowRequest
 from app.core.errors import DataUnavailableError, StateConflictError
-from app.domain.backtest.runner import BacktestConfig, BacktestResult, BacktestRunner
+from app.domain.backtest.event_loop import BenchmarkUnavailableError, StatefulBacktestRunner
+from app.domain.backtest.runner import BacktestConfig, BacktestResult
+from app.domain.causality import as_utc
 from app.domain.data.importer import canonical_content_hash
 from app.domain.data.quality import DataQualityError, QualityGate
 from app.domain.execution.costs import CostModel
-from app.domain.execution.simulator import MarketBar, Order
-from app.domain.strategy.features import DailyBar as StrategyDailyBar
-from app.domain.strategy.features import build_feature_snapshot
-from app.domain.strategy.strong_trend import StrongTrendConfig, StrongTrendStrategy
+from app.domain.execution.simulator import MarketBar
+from app.domain.strategy.registry import (
+    StrategyType,
+    expand_parameters,
+    get_strategy_definition,
+)
 from app.infrastructure.db import models
 from app.infrastructure.db.base import Base
 from app.infrastructure.db.session import make_engine, make_session_factory
+
+_SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 def _hash_payload(payload: dict[str, Any]) -> str:
@@ -51,10 +55,54 @@ def _stable_uuid(alias: str) -> UUID:
     return uuid5(NAMESPACE_URL, f"a-share-quant:{alias}")
 
 
-def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
+def _ordered_batch_ids(payload: dict[str, Any]) -> tuple[UUID, ...]:
+    primary = _uuid(str(payload.get("data_batch_id") or ""))
+    raw_values = payload.get("data_batch_ids")
+    values = list(raw_values) if isinstance(raw_values, list) and raw_values else [primary]
+    identifiers = tuple(_uuid(str(value)) for value in values)
+    if primary is None or any(identifier is None for identifier in identifiers):
+        raise ValueError("data batch identifiers must be UUIDs")
+    typed = tuple(identifier for identifier in identifiers if identifier is not None)
+    if typed[0] != primary:
+        raise ValueError("data_batch_ids must start with data_batch_id")
+    if len(set(typed)) != len(typed):
+        raise ValueError("data_batch_ids cannot contain duplicates")
+    return typed
+
+
+def _cost_config_snapshot(cost: models.CostConfigVersion) -> dict[str, object]:
+    return {
+        "version": cost.version,
+        "commission_rate": str(cost.commission_rate),
+        "minimum_commission": str(cost.commission_min),
+        "sell_stamp_duty_rate": str(cost.stamp_tax_sell_rate),
+        "transfer_fee_rate": str(cost.transfer_rate),
+        "regulatory_fee_rate": str(cost.regulatory_fee_rate),
+        "handling_fee_rate": str(cost.handling_fee_rate),
+        "commission_includes_regulatory": cost.commission_includes_regulatory,
+        "commission_includes_handling": cost.commission_includes_handling,
+        "slippage_buy": str(cost.slippage_buy),
+        "slippage_sell": str(cost.slippage_sell),
+        "execution_price_mode": cost.execution_price_mode,
+        "partial_fill_mode": cost.partial_fill_mode,
+        "config": dict(cost.config),
+    }
+
+
+def _cost_model(cost: models.CostConfigVersion) -> CostModel:
+    return CostModel(
+        commission_rate=cost.commission_rate,
+        minimum_commission=cost.commission_min,
+        sell_stamp_duty_rate=cost.stamp_tax_sell_rate,
+        transfer_fee_rate=cost.transfer_rate,
+        regulatory_fee_rate=cost.regulatory_fee_rate,
+        handling_fee_rate=cost.handling_fee_rate,
+        commission_includes_regulatory=cost.commission_includes_regulatory,
+        commission_includes_handling=cost.commission_includes_handling,
+        slippage_buy=cost.slippage_buy,
+        slippage_sell=cost.slippage_sell,
+        version=cost.version,
+    )
 
 
 class SqlAlchemyResearchRepository(InMemoryResearchRepository):
@@ -165,7 +213,20 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
     def initialize_local_default_versions(self) -> dict[str, object]:
         """Create the documented local baseline versions once during environment bootstrap."""
         with self._session() as session:
-            return self._ensure_default_configs(session, "cost_v1", "rule_v1")
+            legacy = self._ensure_default_configs(session, "cost_v1", "rule_v1")
+            current = self._ensure_default_configs(session, "cost_v1", "rule_v2")
+            legacy_versions = legacy["created_versions"]
+            current_versions = current["created_versions"]
+            if not isinstance(legacy_versions, list) or not isinstance(current_versions, list):
+                raise TypeError("default configuration versions must be a list")
+            created_versions = [str(item) for item in legacy_versions]
+            created_versions.extend(str(item) for item in current_versions)
+            return {
+                **legacy,
+                "created": bool(created_versions),
+                "created_versions": created_versions,
+                "backtest_rule_version": "rule_v2",
+            }
 
     def import_daily_bars(
         self,
@@ -230,26 +291,6 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                     "this market-data file has already been imported",
                     [{"batch_id": str(existing.id), "content_hash": content_hash}],
                 )
-            if not issues:
-                for row in normalized:
-                    duplicate = session.scalar(
-                        select(models.DailyBar)
-                        .join(models.Security, models.DailyBar.security_id == models.Security.id)
-                        .where(
-                            models.Security.symbol == str(row["symbol"]),
-                            models.DailyBar.trade_date == row["trade_date"],
-                        )
-                    )
-                    if duplicate is not None:
-                        raise StateConflictError(
-                            "a security/date market record has already been imported",
-                            [
-                                {
-                                    "symbol": str(row["symbol"]),
-                                    "trade_date": row["trade_date"].isoformat(),
-                                }
-                            ],
-                        )
             batch = models.DataBatch(
                 id=uuid4(),
                 source_id=source.id,
@@ -265,6 +306,13 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                     "record_count": 0 if issues else len(normalized),
                     "issues": issues,
                     "file_location": payload.get("file_location"),
+                    "mapping_version": payload.get("mapping_version", "authorized-file-v1"),
+                    "adjustment_convention": payload.get(
+                        "adjustment_convention", "RAW_TIMES_ADJUST_FACTOR"
+                    ),
+                    "field_convention": payload.get(
+                        "field_convention", "DAILY_OHLCV_OPEN_CLOSE_LIMIT_V2"
+                    ),
                 },
                 content_hash=content_hash,
                 file_hash=file_hash,
@@ -312,6 +360,12 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                             amount=row["amount"],
                             adjust_factor=row["adjust_factor"],
                             available_at=row["available_at"],
+                            open_limit_up=row["open_limit_up"],
+                            open_limit_down=row["open_limit_down"],
+                            close_limit_up=row["close_limit_up"],
+                            close_limit_down=row["close_limit_down"],
+                            limit_up=row["limit_up"],
+                            limit_down=row["limit_down"],
                             data_batch_id=batch.id,
                         )
                     )
@@ -324,6 +378,7 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                             is_delist_period=bool(row["is_delist_period"]),
                             board="MAIN",
                             source_batch_id=batch.id,
+                            observed_at=row["status_observed_at"],
                         )
                     )
             return self._batch_record(batch, source.name, payload)
@@ -405,6 +460,8 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                     "provenance": payload.get("provenance", {}),
                     "actual_pulled_at": payload.get("actual_pulled_at"),
                     "mapping_version": payload.get("mapping_version"),
+                    "adjustment_convention": payload.get("adjustment_convention"),
+                    "field_convention": payload.get("field_convention"),
                 },
                 content_hash=content_hash,
                 file_hash=payload.get("file_hash"),
@@ -547,6 +604,12 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                         amount=row["amount"],
                         adjust_factor=row["adjust_factor"],
                         available_at=row["available_at"],
+                        open_limit_up=row["open_limit_up"],
+                        open_limit_down=row["open_limit_down"],
+                        close_limit_up=row["close_limit_up"],
+                        close_limit_down=row["close_limit_down"],
+                        limit_up=row["limit_up"],
+                        limit_down=row["limit_down"],
                         data_batch_id=batch.id,
                     )
                 )
@@ -566,10 +629,9 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                         is_st=bool(row["is_st"]),
                         is_suspended=bool(row["is_suspended"]),
                         is_delist_period=bool(row["is_delist_period"]),
-                        board=self._normalized_board(
-                            self._ifind_pick(master, "board", "market")
-                        ),
+                        board=self._normalized_board(self._ifind_pick(master, "board", "market")),
                         source_batch_id=batch.id,
+                        observed_at=row["status_observed_at"],
                     )
                 )
                 for industry in (
@@ -579,31 +641,34 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                         industry, "industry_code", "industryCode", "index_code", "l3_code"
                     )
                     if industry_code:
-                        effective_from = self._as_date(
-                            self._ifind_pick(industry, "valid_from", "inDate", "in_date")
-                        ) or row["trade_date"]
-                        existing_membership = session.get(
-                            models.IndustryMembershipHistory,
-                            (security.id, str(industry_code), effective_from),
+                        effective_from = (
+                            self._as_date(
+                                self._ifind_pick(industry, "valid_from", "inDate", "in_date")
+                            )
+                            or row["trade_date"]
                         )
-                        if existing_membership is None:
-                            session.add(
-                                models.IndustryMembershipHistory(
-                                    security_id=security.id,
-                                    industry_code=str(industry_code),
-                                    effective_from=effective_from,
-                                    effective_to=self._as_date(
+                        session.add(
+                            models.IndustryMembershipHistory(
+                                security_id=security.id,
+                                industry_code=str(industry_code),
+                                effective_from=effective_from,
+                                effective_to=self._as_date(
+                                    self._ifind_pick(industry, "valid_to", "outDate", "out_date")
+                                ),
+                                source_batch_id=batch.id,
+                                observed_at=(
+                                    self._timestamp(
                                         self._ifind_pick(
-                                            industry, "valid_to", "outDate", "out_date"
+                                            industry,
+                                            "observed_at",
+                                            "available_at",
+                                            "availableAt",
                                         )
-                                    ),
-                                    source_batch_id=batch.id,
-                                )
+                                    )
+                                    or row["industry_observed_at"]
+                                ),
                             )
-                        else:
-                            existing_membership.effective_to = self._as_date(
-                                self._ifind_pick(industry, "valid_to", "outDate", "out_date")
-                            )
+                        )
             normalized_symbols = {str(row["symbol"]) for row in normalized}
             for status_row in metadata.get("statuses", []):
                 symbol = self._ifind_code(status_row)
@@ -659,7 +724,7 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                         self._ifind_pick(master, "delisted_at", "delistedDate", "delist_date")
                     )
                 existing_status = session.get(
-                    models.SecurityStatusHistory, (security.id, effective_date)
+                    models.SecurityStatusHistory, (security.id, effective_date, batch.id)
                 )
                 if existing_status is None:
                     session.add(
@@ -679,6 +744,17 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                                 self._ifind_pick(master, "board", "market")
                             ),
                             source_batch_id=batch.id,
+                            observed_at=(
+                                self._timestamp(
+                                    self._ifind_pick(
+                                        status_row,
+                                        "observed_at",
+                                        "available_at",
+                                        "availableAt",
+                                    )
+                                )
+                                or available_at
+                            ),
                         )
                     )
             if quality_errors:
@@ -797,6 +873,14 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
         with self._session() as session:
             self._ensure_user(session, owner_id)
             code = str(payload.get("code") or payload.get("name") or "strategy")
+            strategy_type = str(payload.get("strategy_type") or StrategyType.STRONG_TREND.value)
+            raw_parameters = dict(payload.get("parameters") or {})
+            try:
+                parameters = expand_parameters(strategy_type, raw_parameters)
+            except ValueError:
+                if "strategy_type" in payload:
+                    raise
+                parameters = raw_parameters
             versions = session.scalars(
                 select(models.StrategyVersion).where(models.StrategyVersion.code == code)
             ).all()
@@ -804,9 +888,10 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
             strategy = models.StrategyVersion(
                 id=uuid4(),
                 code=code,
+                strategy_type=strategy_type,
                 version=version,
                 status="DRAFT",
-                parameters=payload.get("parameters", {}),
+                parameters=parameters,
                 change_reason=str(payload.get("change_reason") or "initial version"),
                 created_by=owner_id,
                 published_at=None,
@@ -875,12 +960,17 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
             )
 
     def dependencies_available(self, payload: dict[str, Any]) -> bool:
-        batch_id = _uuid(str(payload["data_batch_id"]))
+        try:
+            batch_ids = _ordered_batch_ids(payload)
+        except ValueError:
+            return False
         strategy_id = _uuid(str(payload["strategy_version_id"]))
-        if batch_id is None or strategy_id is None:
+        if strategy_id is None:
             return False
         with self._session() as session:
-            batch = session.get(models.DataBatch, batch_id)
+            batches = session.scalars(
+                select(models.DataBatch).where(models.DataBatch.id.in_(batch_ids))
+            ).all()
             strategy = session.get(models.StrategyVersion, strategy_id)
             cost = self._resolve_config(
                 session, models.CostConfigVersion, str(payload["cost_config_id"])
@@ -889,9 +979,15 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                 session, models.RuleConfigVersion, str(payload["rule_config_id"])
             )
             return bool(
-                batch
-                and batch.status in {"AVAILABLE", "WARNING_AVAILABLE"}
-                and (payload.get("owner_id") is None or batch.owner_id == str(payload["owner_id"]))
+                len(batches) == len(batch_ids)
+                and all(
+                    batch.status in {"AVAILABLE", "WARNING_AVAILABLE"}
+                    and (
+                        payload.get("owner_id") is None
+                        or batch.owner_id == str(payload["owner_id"])
+                    )
+                    for batch in batches
+                )
                 and strategy
                 and strategy.status == "PUBLISHED"
                 and (
@@ -902,10 +998,206 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                 and rule is not None
             )
 
+    @staticmethod
+    def _backtest_data_snapshot(
+        session: Session,
+        batches: tuple[models.DataBatch, ...],
+        *,
+        end_date: date,
+    ) -> dict[str, object]:
+        batch_ids = tuple(batch.id for batch in batches)
+        status_records = session.execute(
+            select(models.SecurityStatusHistory, models.Security.symbol)
+            .join(
+                models.Security,
+                models.SecurityStatusHistory.security_id == models.Security.id,
+            )
+            .where(models.SecurityStatusHistory.source_batch_id.in_(batch_ids))
+        ).all()
+        status_payload = [
+            {
+                "source_batch_id": str(status.source_batch_id),
+                "symbol": symbol,
+                "effective_date": status.effective_date,
+                "is_st": status.is_st,
+                "is_suspended": status.is_suspended,
+                "is_delist_period": status.is_delist_period,
+                "board": status.board,
+                "observed_at": as_utc(status.observed_at).isoformat(),
+            }
+            for status, symbol in status_records
+        ]
+        membership_records = session.execute(
+            select(models.IndustryMembershipHistory, models.Security.symbol)
+            .join(
+                models.Security,
+                models.IndustryMembershipHistory.security_id == models.Security.id,
+            )
+            .where(models.IndustryMembershipHistory.source_batch_id.in_(batch_ids))
+        ).all()
+        membership_payload = [
+            {
+                "source_batch_id": str(membership.source_batch_id),
+                "symbol": symbol,
+                "industry_code": membership.industry_code,
+                "effective_from": membership.effective_from,
+                "effective_to": membership.effective_to,
+                "observed_at": as_utc(membership.observed_at).isoformat(),
+            }
+            for membership, symbol in membership_records
+        ]
+        security_records = session.scalars(
+            select(models.Security)
+            .join(models.DailyBar, models.DailyBar.security_id == models.Security.id)
+            .where(models.DailyBar.data_batch_id.in_(batch_ids))
+            .distinct()
+        ).all()
+        security_payload: list[dict[str, object]] = [
+            {
+                "security_id": str(security.id),
+                "symbol": security.symbol,
+                "exchange": security.exchange,
+                "security_type": security.security_type,
+                "list_date": security.list_date,
+                "delist_date": security.delist_date,
+            }
+            for security in security_records
+        ]
+        calendar_records = session.scalars(
+            select(models.TradeCalendar)
+            .where(models.TradeCalendar.trade_date <= end_date)
+            .order_by(models.TradeCalendar.exchange, models.TradeCalendar.trade_date)
+        ).all()
+        calendar_payload: list[dict[str, object]] = [
+            {
+                "exchange": record.exchange,
+                "trade_date": record.trade_date,
+                "is_open": record.is_open,
+                "prev_trade_date": record.prev_trade_date,
+                "next_trade_date": record.next_trade_date,
+            }
+            for record in calendar_records
+        ]
+        batch_payload = [
+            {
+                "ordinal": ordinal,
+                "batch_id": str(batch.id),
+                "source_id": str(batch.source_id),
+                "dataset_type": batch.dataset_type,
+                "as_of_date": batch.as_of_date.isoformat(),
+                "start_date": batch.start_date.isoformat() if batch.start_date else None,
+                "end_date": batch.end_date.isoformat() if batch.end_date else None,
+                "available_at": as_utc(batch.available_at).isoformat(),
+                "information_cutoff_at": as_utc(batch.information_cutoff_at).isoformat(),
+                "version": batch.version,
+                "status": batch.status,
+                "content_hash": batch.content_hash,
+                "file_hash": batch.file_hash,
+                "record_count": batch.record_count,
+                "mapping_version": (batch.quality_summary or {}).get("mapping_version"),
+                "adjustment_convention": (batch.quality_summary or {}).get("adjustment_convention"),
+                "field_convention": (batch.quality_summary or {}).get("field_convention"),
+            }
+            for ordinal, batch in enumerate(batches)
+        ]
+        return {
+            "data_batches": batch_payload,
+            "data_batch_set_hash": _hash_payload({"data_batches": batch_payload}),
+            "status_history_hash": canonical_content_hash(status_payload),
+            "industry_history_hash": canonical_content_hash(membership_payload),
+            "security_master_hash": canonical_content_hash(security_payload),
+            "trading_calendar_hash": canonical_content_hash(calendar_payload),
+        }
+
+    @staticmethod
+    def _batch_set_error(
+        session: Session,
+        batches: tuple[models.DataBatch, ...],
+        *,
+        start_date: date,
+        end_date: date,
+    ) -> str | None:
+        if not batches:
+            return "data batch set is empty"
+        if len({batch.source_id for batch in batches}) != 1:
+            return "data batches must use the same supplier"
+        if len({batch.dataset_type for batch in batches}) != 1:
+            return "data batches must use the same dataset type"
+        batch_dates = tuple(batch.as_of_date for batch in batches)
+        if any(
+            current <= previous
+            for previous, current in zip(batch_dates, batch_dates[1:], strict=False)
+        ):
+            return "data batches must be ordered by strictly increasing dates"
+        conventions = {
+            (
+                (batch.quality_summary or {}).get("mapping_version"),
+                (batch.quality_summary or {}).get("adjustment_convention"),
+                (batch.quality_summary or {}).get("field_convention"),
+            )
+            for batch in batches
+        }
+        if len(conventions) != 1 or any(value is None for value in next(iter(conventions))):
+            return "data batches have incompatible or unproven field conventions"
+        selected_batch_ids = tuple(batch.id for batch in batches)
+        overlapping_market_dates = session.scalars(
+            select(models.DailyBar.trade_date)
+            .where(
+                models.DailyBar.data_batch_id.in_(selected_batch_ids),
+                models.DailyBar.trade_date >= start_date,
+                models.DailyBar.trade_date <= end_date,
+            )
+            .group_by(models.DailyBar.trade_date)
+            .having(func.count(func.distinct(models.DailyBar.data_batch_id)) > 1)
+        ).all()
+        if overlapping_market_dates:
+            return "each market date must resolve to exactly one selected batch version"
+        unresolved_industry_dates = session.scalars(
+            select(models.IndustryMembershipHistory.effective_from)
+            .where(
+                models.IndustryMembershipHistory.source_batch_id.in_(selected_batch_ids),
+                models.IndustryMembershipHistory.effective_from <= end_date,
+            )
+            .group_by(
+                models.IndustryMembershipHistory.security_id,
+                models.IndustryMembershipHistory.effective_from,
+                models.IndustryMembershipHistory.source_batch_id,
+            )
+            .having(func.count(func.distinct(models.IndustryMembershipHistory.industry_code)) > 1)
+        ).all()
+        if unresolved_industry_dates:
+            return "industry history has an unresolved selected-batch tie"
+        open_dates = set(
+            session.scalars(
+                select(models.TradeCalendar.trade_date)
+                .where(
+                    models.TradeCalendar.is_open.is_(True),
+                    models.TradeCalendar.trade_date >= start_date,
+                    models.TradeCalendar.trade_date <= end_date,
+                )
+                .distinct()
+            ).all()
+        )
+        if not open_dates:
+            return "authoritative trading calendar is unavailable"
+        covered_dates = {
+            trade_date
+            for trade_date in open_dates
+            if any(
+                (batch.start_date or batch.as_of_date)
+                <= trade_date
+                <= (batch.end_date or batch.as_of_date)
+                for batch in batches
+            )
+        }
+        if covered_dates != open_dates:
+            return "data batch set does not cover every requested trading date"
+        return None
+
     def validate_backtest(self, owner_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         """Validate a durable backtest without creating configs, runs, or artifacts."""
         try:
-            batch_id = _uuid(str(payload["data_batch_id"]))
+            batch_ids = _ordered_batch_ids(payload)
             strategy_id = _uuid(str(payload["strategy_version_id"]))
             start = date.fromisoformat(str(payload["start_date"]))
             end = date.fromisoformat(str(payload["end_date"]))
@@ -914,19 +1206,19 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
             oos_start = date.fromisoformat(str(payload["oos_start"]))
         except (KeyError, TypeError, ValueError):
             return {"available": False, "reason": "invalid backtest identifiers or dates"}
-        if (
-            batch_id is None
-            or strategy_id is None
-            or not start <= train_end < valid_end < oos_start <= end
-        ):
+        if strategy_id is None or not start <= train_end < valid_end < oos_start <= end:
             return {"available": False, "reason": "invalid backtest date split"}
         with self._session() as session:
-            batch = session.scalar(
-                select(models.DataBatch).where(
-                    models.DataBatch.id == batch_id,
-                    models.DataBatch.owner_id == str(owner_id),
-                )
-            )
+            batches_by_id = {
+                batch.id: batch
+                for batch in session.scalars(
+                    select(models.DataBatch).where(
+                        models.DataBatch.id.in_(batch_ids),
+                        models.DataBatch.owner_id == str(owner_id),
+                    )
+                ).all()
+            }
+            batches = tuple(batches_by_id.get(batch_id) for batch_id in batch_ids)
             strategy = session.scalar(
                 select(models.StrategyVersion).where(
                     models.StrategyVersion.id == strategy_id,
@@ -939,7 +1231,15 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
             rule = self._resolve_config(
                 session, models.RuleConfigVersion, str(payload["rule_config_id"])
             )
-            if batch is None or strategy is None or strategy.status != "PUBLISHED":
+            if (
+                any(batch is None for batch in batches)
+                or any(
+                    batch is not None and batch.status not in {"AVAILABLE", "WARNING_AVAILABLE"}
+                    for batch in batches
+                )
+                or strategy is None
+                or strategy.status != "PUBLISHED"
+            ):
                 return {
                     "available": False,
                     "reason": "backtest batch or published strategy is unavailable",
@@ -949,26 +1249,42 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                     "available": False,
                     "reason": "backtest cost or rule configuration is unavailable",
                 }
-            cutoff = (
-                self._timestamp(payload.get("information_cutoff_at")) or batch.information_cutoff_at
+            typed_batches = tuple(batch for batch in batches if batch is not None)
+            batch_set_error = self._batch_set_error(
+                session,
+                typed_batches,
+                start_date=start,
+                end_date=end,
             )
-            if _as_utc(cutoff) > _as_utc(batch.information_cutoff_at):
+            if batch_set_error is not None:
+                return {"available": False, "reason": batch_set_error}
+            maximum_cutoff = max(typed_batches, key=lambda item: as_utc(item.information_cutoff_at))
+            cutoff = (
+                self._timestamp(payload.get("information_cutoff_at"))
+                or maximum_cutoff.information_cutoff_at
+            )
+            if as_utc(cutoff) > as_utc(maximum_cutoff.information_cutoff_at):
                 return {
                     "available": False,
                     "reason": "information cutoff is later than the data batch cutoff",
+                }
+            if any(as_utc(batch.available_at) > as_utc(cutoff) for batch in typed_batches):
+                return {
+                    "available": False,
+                    "reason": "one or more data batches are not available by the information cutoff",
                 }
             rows = session.execute(
                 select(models.DailyBar, models.Security)
                 .join(models.Security, models.DailyBar.security_id == models.Security.id)
                 .where(
-                    models.DailyBar.data_batch_id == batch.id,
+                    models.DailyBar.data_batch_id.in_(batch_ids),
                     models.DailyBar.trade_date <= end,
                 )
             ).all()
             available = [
                 (bar, security)
                 for bar, security in rows
-                if bar.available_at is not None and _as_utc(bar.available_at) <= _as_utc(cutoff)
+                if bar.available_at is not None and as_utc(bar.available_at) <= as_utc(cutoff)
             ]
             requested = [
                 (bar, security) for bar, security in available if start <= bar.trade_date <= end
@@ -978,22 +1294,40 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                     "available": False,
                     "reason": "no bars are available before the information cutoff",
                 }
-            if not any(
-                security.symbol == str(payload["benchmark_symbol"]) for bar, security in requested
-            ):
+            open_dates = tuple(
+                session.scalars(
+                    select(models.TradeCalendar.trade_date)
+                    .where(
+                        models.TradeCalendar.is_open.is_(True),
+                        models.TradeCalendar.trade_date >= start,
+                        models.TradeCalendar.trade_date <= end,
+                    )
+                    .distinct()
+                    .order_by(models.TradeCalendar.trade_date)
+                ).all()
+            )
+            benchmark_dates = {
+                bar.trade_date
+                for bar, security in requested
+                if security.symbol == str(payload["benchmark_symbol"])
+            }
+            if not open_dates or any(value not in benchmark_dates for value in open_dates):
                 return {"available": False, "reason": "benchmark market snapshot is unavailable"}
             return {
                 "available": True,
-                "data_batch_id": str(batch.id),
-                "data_version": batch.version,
+                "data_batch_id": str(batch_ids[0]),
+                "data_batch_ids": [str(batch_id) for batch_id in batch_ids],
+                "data_version": _hash_payload(
+                    {"content_hashes": [batch.content_hash for batch in typed_batches]}
+                ),
                 "bar_count": len(requested),
                 "information_cutoff_at": cutoff.isoformat(),
             }
 
     def create_run(self, owner_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
-        batch_id = _uuid(str(payload["data_batch_id"]))
+        batch_ids = _ordered_batch_ids(payload)
         strategy_id = _uuid(str(payload["strategy_version_id"]))
-        if batch_id is None or strategy_id is None:
+        if strategy_id is None:
             raise ValueError("data_batch_id and strategy_version_id must be UUIDs")
         start_date = date.fromisoformat(str(payload["start_date"]))
         end_date = date.fromisoformat(str(payload["end_date"]))
@@ -1010,13 +1344,19 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
             rule_id = self._resolve_config_id(
                 session, models.RuleConfigVersion, str(payload["rule_config_id"])
             )
-            batch = session.scalar(
-                select(models.DataBatch).where(
-                    models.DataBatch.id == batch_id,
-                    models.DataBatch.owner_id == str(owner_id),
-                    models.DataBatch.status.in_(("AVAILABLE", "WARNING_AVAILABLE")),
-                )
-            )
+            cost = session.get(models.CostConfigVersion, cost_id)
+            rule = session.get(models.RuleConfigVersion, rule_id)
+            batches_by_id = {
+                batch.id: batch
+                for batch in session.scalars(
+                    select(models.DataBatch).where(
+                        models.DataBatch.id.in_(batch_ids),
+                        models.DataBatch.owner_id == str(owner_id),
+                        models.DataBatch.status.in_(("AVAILABLE", "WARNING_AVAILABLE")),
+                    )
+                ).all()
+            }
+            batches = tuple(batches_by_id.get(batch_id) for batch_id in batch_ids)
             strategy = session.scalar(
                 select(models.StrategyVersion).where(
                     models.StrategyVersion.id == strategy_id,
@@ -1024,8 +1364,59 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                     models.StrategyVersion.status == "PUBLISHED",
                 )
             )
-            if batch is None or strategy is None:
+            if (
+                any(batch is None for batch in batches)
+                or strategy is None
+                or cost is None
+                or rule is None
+                or rule.status != "PUBLISHED"
+            ):
                 raise StateConflictError("backtest prerequisites are unavailable")
+            if rule.config.get("baseline") != "engine-v2":
+                raise StateConflictError("engine-v2 backtests require an engine-v2 rule version")
+            definition = get_strategy_definition(strategy.strategy_type)
+            secondary_benchmark = str(payload.get("secondary_benchmark_symbol") or "000001.SH")
+            universe_benchmark_enabled = bool(payload.get("universe_benchmark_enabled", True))
+            typed_batches = tuple(batch for batch in batches if batch is not None)
+            batch_set_error = self._batch_set_error(
+                session,
+                typed_batches,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            if batch_set_error is not None:
+                raise StateConflictError(batch_set_error)
+            maximum_cutoff = max(typed_batches, key=lambda item: as_utc(item.information_cutoff_at))
+            cutoff = (
+                self._timestamp(payload.get("information_cutoff_at"))
+                or maximum_cutoff.information_cutoff_at
+            )
+            if as_utc(cutoff) > as_utc(maximum_cutoff.information_cutoff_at) or any(
+                as_utc(batch.available_at) > as_utc(cutoff) for batch in typed_batches
+            ):
+                raise StateConflictError(
+                    "one or more data batches are not available by the information cutoff"
+                )
+            data_snapshot = self._backtest_data_snapshot(session, typed_batches, end_date=end_date)
+            cost_snapshot = _cost_config_snapshot(cost)
+            config_snapshot = {
+                **dict(payload),
+                "data_batch_id": str(batch_ids[0]),
+                "data_batch_ids": [str(batch_id) for batch_id in batch_ids],
+                **data_snapshot,
+                "information_cutoff_at": as_utc(cutoff).isoformat(),
+                "strategy_type": strategy.strategy_type,
+                "effective_parameters": dict(strategy.parameters),
+                "strategy_implementation_version": definition.implementation_version,
+                "rule_version": rule.version,
+                "rule_config": dict(rule.config),
+                "rule_config_hash": _hash_payload(dict(rule.config)),
+                "cost_config": cost_snapshot,
+                "cost_config_hash": _hash_payload(cost_snapshot),
+                "secondary_benchmark_symbol": secondary_benchmark,
+                "universe_benchmark_enabled": universe_benchmark_enabled,
+                "engine_version": "engine-v2",
+            }
             requested_run_no = str(payload.get("run_no") or "")
             if requested_run_no:
                 existing = session.scalar(
@@ -1038,7 +1429,7 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
             run = models.BacktestRun(
                 id=uuid4(),
                 run_no=requested_run_no or f"run_{uuid4().hex[:12]}",
-                data_batch_id=batch_id,
+                data_batch_id=batch_ids[0],
                 strategy_version_id=strategy_id,
                 cost_config_id=cost_id,
                 rule_config_id=rule_id,
@@ -1048,11 +1439,11 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                 valid_end=valid_end,
                 oos_start=oos_start,
                 benchmark_symbol=str(payload["benchmark_symbol"]),
-                secondary_benchmark_symbol="000001.SH",
-                universe_benchmark_enabled=True,
+                secondary_benchmark_symbol=secondary_benchmark,
+                universe_benchmark_enabled=universe_benchmark_enabled,
                 execution_price_mode="NEXT_OPEN_ADJUSTED",
                 initial_equity=payload["initial_equity"],
-                config_snapshot=dict(payload),
+                config_snapshot=config_snapshot,
                 status="QUEUED",
                 result_usable=False,
                 created_by=owner_id,
@@ -1095,6 +1486,10 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
             )
             if batch is None or strategy is None:
                 raise StateConflictError("daily flow prerequisites are unavailable")
+            if strategy.strategy_type != StrategyType.STRONG_TREND.value:
+                raise StateConflictError(
+                    f"strategy {strategy.strategy_type} is not approved for daily flow"
+                )
             cost = self._resolve_config(
                 session, models.CostConfigVersion, str(payload.get("cost_config_id", "cost_v1"))
             )
@@ -1109,6 +1504,11 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                 raise StateConflictError(
                     "daily flow data or versioned configuration is unavailable"
                 )
+            information_cutoff_at = (
+                self._timestamp(payload.get("information_cutoff_at")) or batch.information_cutoff_at
+            )
+            if as_utc(information_cutoff_at) > as_utc(batch.information_cutoff_at):
+                raise StateConflictError("information cutoff is later than the data batch cutoff")
             rows = session.execute(
                 select(models.DailyBar, models.Security)
                 .join(models.Security, models.DailyBar.security_id == models.Security.id)
@@ -1117,7 +1517,8 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
             ).all()
             statuses = session.scalars(
                 select(models.SecurityStatusHistory).where(
-                    models.SecurityStatusHistory.source_batch_id == batch.id
+                    models.SecurityStatusHistory.source_batch_id == batch.id,
+                    models.SecurityStatusHistory.observed_at <= information_cutoff_at,
                 )
             ).all()
             status_by_key = {
@@ -1134,6 +1535,13 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                     is_suspended=self._status_is_suspended(
                         status_by_key.get((security.id, bar.trade_date))
                     ),
+                    limit_up=bool(bar.open_limit_up),
+                    limit_down=bool(bar.open_limit_down),
+                    limit_status_known=(
+                        bar.open_limit_up is not None and bar.open_limit_down is not None
+                    ),
+                    close_limit_up=bar.close_limit_up,
+                    close_limit_down=bar.close_limit_down,
                     amount=bar.amount,
                     available_at=bar.available_at,
                     is_st=bool(
@@ -1148,17 +1556,12 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                 )
                 for bar, security in rows
             )
-            information_cutoff_at = (
-                self._timestamp(payload.get("information_cutoff_at")) or batch.information_cutoff_at
-            )
-            if _as_utc(information_cutoff_at) > _as_utc(batch.information_cutoff_at):
-                raise StateConflictError("information cutoff is later than the data batch cutoff")
             visible_bars = [
                 bar
                 for bar in bars
                 if bar.trade_date <= as_of_date
                 and bar.available_at is not None
-                and _as_utc(bar.available_at) <= _as_utc(information_cutoff_at)
+                and as_utc(bar.available_at) <= as_utc(information_cutoff_at)
             ]
             if not any(
                 bar.symbol == str(payload.get("benchmark_symbol", "000300.SH"))
@@ -1190,13 +1593,7 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                 initial_equity=initial_equity,
                 max_investment_ratio=max_investment_ratio,
             )
-            cost_model = CostModel(
-                commission_rate=cost.commission_rate,
-                minimum_commission=cost.commission_min,
-                sell_stamp_duty_rate=cost.stamp_tax_sell_rate,
-                transfer_fee_rate=cost.transfer_rate,
-                version=cost.version,
-            )
+            cost_model = _cost_model(cost)
             strategy_parameters = dict(strategy.parameters)
         result = DailyFlowApplicationService(cost_model).execute(
             request,
@@ -1375,15 +1772,42 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                 return self._run_record(run)
             if run.status == "RUNNING":
                 raise StateConflictError("backtest run is already executing")
-            batch = session.get(models.DataBatch, run.data_batch_id)
+            snapshot = dict(run.config_snapshot or {})
+            try:
+                batch_ids = _ordered_batch_ids(
+                    {
+                        "data_batch_id": str(run.data_batch_id),
+                        "data_batch_ids": snapshot.get("data_batch_ids"),
+                    }
+                )
+            except ValueError:
+                batch_ids = ()
+            batches_by_id = {
+                batch.id: batch
+                for batch in session.scalars(
+                    select(models.DataBatch).where(models.DataBatch.id.in_(batch_ids))
+                ).all()
+            }
+            batches = tuple(batches_by_id.get(batch_id) for batch_id in batch_ids)
             strategy = session.get(models.StrategyVersion, run.strategy_version_id)
             cost = session.get(models.CostConfigVersion, run.cost_config_id)
+            rule = session.get(models.RuleConfigVersion, run.rule_config_id)
             if (
-                batch is None
-                or batch.status not in {"AVAILABLE", "WARNING_AVAILABLE"}
+                not batches
+                or any(batch is None for batch in batches)
+                or any(
+                    batch is not None
+                    and (
+                        batch.status not in {"AVAILABLE", "WARNING_AVAILABLE"}
+                        or batch.owner_id != str(owner_id)
+                    )
+                    for batch in batches
+                )
                 or strategy is None
                 or strategy.status != "PUBLISHED"
                 or cost is None
+                or rule is None
+                or rule.status != "PUBLISHED"
             ):
                 run.status = "UNAVAILABLE"
                 run.result_usable = False
@@ -1399,41 +1823,57 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                     "backtest prerequisites are unavailable",
                 )
                 return self._run_record(run)
-            rows = session.execute(
-                select(models.DailyBar, models.Security)
-                .join(models.Security, models.DailyBar.security_id == models.Security.id)
-                .where(
-                    models.DailyBar.data_batch_id == batch.id,
-                    models.DailyBar.trade_date <= run.end_date,
-                )
-                .order_by(models.DailyBar.trade_date, models.Security.symbol)
-            ).all()
-            cutoff = self._timestamp(run.config_snapshot.get("information_cutoff_at"))
-            cutoff = cutoff or batch.information_cutoff_at
-            if _as_utc(cutoff) > _as_utc(batch.information_cutoff_at):
-                cutoff = batch.information_cutoff_at
-                cutoff_invalid = True
-            else:
-                cutoff_invalid = False
-            available_rows = [
-                (bar, security)
-                for bar, security in rows
-                if bar.available_at is not None and _as_utc(bar.available_at) <= _as_utc(cutoff)
-            ]
-            requested_rows = [
-                (bar, security)
-                for bar, security in available_rows
-                if run.start_date <= bar.trade_date <= run.end_date
-            ]
-            if cutoff_invalid or not requested_rows:
+            typed_batches = tuple(batch for batch in batches if batch is not None)
+            batch_set_error = self._batch_set_error(
+                session,
+                typed_batches,
+                start_date=run.start_date,
+                end_date=run.end_date,
+            )
+            current_data_snapshot = self._backtest_data_snapshot(
+                session, typed_batches, end_date=run.end_date
+            )
+            strategy_type = str(snapshot.get("strategy_type") or "")
+            implementation_version = str(snapshot.get("strategy_implementation_version") or "")
+            rule_version = str(snapshot.get("rule_version") or "")
+            rule_config = snapshot.get("rule_config")
+            if not isinstance(rule_config, dict):
+                rule_config = {}
+            try:
+                definition = get_strategy_definition(strategy_type)
+            except ValueError:
+                definition = None
+            current_cost_snapshot = _cost_config_snapshot(cost)
+            version_mismatch = (
+                definition is None
+                or batch_set_error is not None
+                or definition.implementation_version != implementation_version
+                or rule.version != rule_version
+                or dict(rule.config) != rule_config
+                or _hash_payload(rule_config) != snapshot.get("rule_config_hash")
+                or current_cost_snapshot != snapshot.get("cost_config")
+                or _hash_payload(current_cost_snapshot) != snapshot.get("cost_config_hash")
+                or current_data_snapshot
+                != {
+                    key: snapshot.get(key)
+                    for key in (
+                        "data_batches",
+                        "data_batch_set_hash",
+                        "status_history_hash",
+                        "industry_history_hash",
+                        "security_master_hash",
+                        "trading_calendar_hash",
+                    )
+                }
+            )
+            if version_mismatch:
                 run.status = "UNAVAILABLE"
                 run.result_usable = False
                 run.result_summary = {
                     "available": False,
                     "reason": (
-                        "information cutoff is later than the data batch cutoff"
-                        if cutoff_invalid
-                        else "backtest data contains no bars available before the information cutoff"
+                        "snapshotted implementation is unavailable because strategy, rule, "
+                        "cost, or data inputs no longer match"
                     ),
                 }
                 self._set_stage(
@@ -1444,34 +1884,111 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                     str(run.result_summary["reason"]),
                 )
                 return self._run_record(run)
-            if not any(security.symbol == run.benchmark_symbol for _, security in requested_rows):
+            rows = session.execute(
+                select(models.DailyBar, models.Security)
+                .join(models.Security, models.DailyBar.security_id == models.Security.id)
+                .where(
+                    models.DailyBar.data_batch_id.in_(batch_ids),
+                    models.DailyBar.trade_date <= run.end_date,
+                )
+                .order_by(models.DailyBar.trade_date, models.Security.symbol)
+            ).all()
+            cutoff = self._timestamp(snapshot.get("information_cutoff_at"))
+            maximum_cutoff = max(typed_batches, key=lambda item: as_utc(item.information_cutoff_at))
+            cutoff = cutoff or maximum_cutoff.information_cutoff_at
+            if as_utc(cutoff) > as_utc(maximum_cutoff.information_cutoff_at) or any(
+                as_utc(batch.available_at) > as_utc(cutoff) for batch in typed_batches
+            ):
+                cutoff_invalid = True
+            else:
+                cutoff_invalid = False
+            available_rows = [
+                (bar, security)
+                for bar, security in rows
+                if bar.available_at is not None and as_utc(bar.available_at) <= as_utc(cutoff)
+            ]
+            calendar_dates = tuple(
+                session.scalars(
+                    select(models.TradeCalendar.trade_date)
+                    .where(
+                        models.TradeCalendar.is_open.is_(True),
+                        models.TradeCalendar.trade_date <= run.end_date,
+                    )
+                    .distinct()
+                    .order_by(models.TradeCalendar.trade_date)
+                ).all()
+            )
+            run_trade_dates = tuple(
+                trade_date
+                for trade_date in calendar_dates
+                if run.start_date <= trade_date <= run.end_date
+            )
+            requested_rows = [
+                (bar, security)
+                for bar, security in available_rows
+                if run.start_date <= bar.trade_date <= run.end_date
+            ]
+            if cutoff_invalid or not requested_rows or not run_trade_dates:
                 run.status = "UNAVAILABLE"
                 run.result_usable = False
                 run.result_summary = {
                     "available": False,
-                    "reason": "benchmark market snapshot is unavailable",
+                    "reason": (
+                        "information cutoff is later than the data batch cutoff"
+                        if cutoff_invalid
+                        else (
+                            "authoritative trading calendar is unavailable"
+                            if not run_trade_dates
+                            else "backtest data contains no bars available before the information cutoff"
+                        )
+                    ),
                 }
                 self._set_stage(
                     session,
                     run.id,
                     "data_quality",
                     "UNAVAILABLE",
-                    "benchmark market snapshot is unavailable",
+                    str(run.result_summary["reason"]),
+                )
+                return self._run_record(run)
+            benchmark_dates = {
+                bar.trade_date
+                for bar, security in requested_rows
+                if security.symbol == run.benchmark_symbol and bar.adjusted_close is not None
+            }
+            missing_benchmark_dates = [
+                trade_date for trade_date in run_trade_dates if trade_date not in benchmark_dates
+            ]
+            if missing_benchmark_dates:
+                run.status = "UNAVAILABLE"
+                run.result_usable = False
+                run.result_summary = {
+                    "available": False,
+                    "reason": (
+                        "benchmark market snapshot is unavailable on "
+                        f"{missing_benchmark_dates[0].isoformat()}"
+                    ),
+                }
+                self._set_stage(
+                    session,
+                    run.id,
+                    "data_quality",
+                    "UNAVAILABLE",
+                    str(run.result_summary["reason"]),
                 )
                 return self._run_record(run)
             status_rows = session.scalars(
                 select(models.SecurityStatusHistory).where(
-                    models.SecurityStatusHistory.source_batch_id == batch.id
+                    models.SecurityStatusHistory.source_batch_id.in_(batch_ids)
                 )
             ).all()
+            batch_priority = {batch_id: ordinal for ordinal, batch_id in enumerate(batch_ids)}
             statuses_by_security: dict[UUID, list[models.SecurityStatusHistory]] = {}
             for status in status_rows:
                 statuses_by_security.setdefault(status.security_id, []).append(status)
-            for statuses in statuses_by_security.values():
-                statuses.sort(key=lambda item: item.effective_date)
             memberships = session.scalars(
                 select(models.IndustryMembershipHistory).where(
-                    models.IndustryMembershipHistory.source_batch_id == batch.id
+                    models.IndustryMembershipHistory.source_batch_id.in_(batch_ids)
                 )
             ).all()
             memberships_by_security: dict[UUID, list[models.IndustryMembershipHistory]] = {}
@@ -1481,30 +1998,68 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
             def status_as_of(
                 security_id: UUID, trade_date: date
             ) -> models.SecurityStatusHistory | None:
-                return next(
-                    (
-                        status
-                        for status in reversed(statuses_by_security.get(security_id, []))
-                        if status.effective_date <= trade_date
+                return self._status_as_of(
+                    statuses_by_security.get(security_id, ()),
+                    trade_date,
+                    min(
+                        as_utc(cutoff),
+                        datetime.combine(trade_date, time.max, _SHANGHAI).astimezone(UTC),
                     ),
-                    None,
+                    batch_priority,
                 )
 
             def industry_as_of(security_id: UUID, trade_date: date) -> str | None:
-                matches = [
-                    membership
-                    for membership in memberships_by_security.get(security_id, [])
-                    if membership.effective_from <= trade_date
-                    and (membership.effective_to is None or trade_date <= membership.effective_to)
-                ]
-                return (
-                    max(matches, key=lambda item: item.effective_from).industry_code
-                    if matches
-                    else None
+                membership, _ = self._industry_as_of(
+                    memberships_by_security.get(security_id, ()),
+                    trade_date,
+                    min(
+                        as_utc(cutoff),
+                        datetime.combine(trade_date, time.max, _SHANGHAI).astimezone(UTC),
+                    ),
+                    batch_priority,
                 )
+                return membership.industry_code if membership is not None else None
+
+            amount_history: dict[UUID, list[Decimal]] = {}
+            universe_eligibility: dict[tuple[UUID, date], bool] = {}
+            securities_by_id: dict[UUID, models.Security] = {}
+            for bar, security in available_rows:
+                securities_by_id[security.id] = security
+                history = amount_history.setdefault(security.id, [])
+                history.append(bar.amount)
+                if len(history) > 20:
+                    del history[0]
+                current_status = status_as_of(security.id, bar.trade_date)
+                listing_days = bisect_right(calendar_dates, bar.trade_date) - bisect_left(
+                    calendar_dates, security.list_date
+                )
+                universe_eligibility[(security.id, bar.trade_date)] = bool(
+                    security.security_type == "COMMON"
+                    and current_status is not None
+                    and current_status.board == "MAIN"
+                    and not current_status.is_st
+                    and not current_status.is_suspended
+                    and not current_status.is_delist_period
+                    and (security.delist_date is None or security.delist_date > bar.trade_date)
+                    and listing_days >= 60
+                    and len(history) >= 20
+                    and median(history) >= Decimal("20000000")
+                )
+            suspended_by_date = {
+                trade_date: frozenset(
+                    security.symbol
+                    for security in securities_by_id.values()
+                    if (suspension_status := status_as_of(security.id, trade_date)) is not None
+                    and suspension_status.is_suspended
+                )
+                for trade_date in run_trade_dates
+            }
 
             def build_market_bar(bar: models.DailyBar, security: models.Security) -> MarketBar:
-                status = status_as_of(security.id, bar.trade_date)
+                current_status = status_as_of(security.id, bar.trade_date)
+                limit_up, limit_down, limit_status_known = self._limit_state(
+                    bar, current_status, None
+                )
                 return MarketBar(
                     symbol=security.symbol,
                     trade_date=bar.trade_date,
@@ -1512,12 +2067,17 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                     low=bar.adjusted_low,
                     high=bar.adjusted_high,
                     close=bar.adjusted_close,
-                    is_suspended=bool(status and status.is_suspended),
+                    is_suspended=bool(current_status and current_status.is_suspended),
+                    limit_up=limit_up,
+                    limit_down=limit_down,
+                    limit_status_known=limit_status_known,
+                    close_limit_up=bar.close_limit_up,
+                    close_limit_down=bar.close_limit_down,
                     amount=bar.amount,
                     available_at=bar.available_at,
-                    is_st=bool(status and status.is_st),
+                    is_st=bool(current_status and current_status.is_st),
                     is_delisted=bool(
-                        (status and status.is_delist_period)
+                        (current_status and current_status.is_delist_period)
                         or (
                             security.delist_date is not None
                             and bar.trade_date >= security.delist_date
@@ -1525,6 +2085,11 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                     ),
                     industry=industry_as_of(security.id, bar.trade_date),
                     list_date=security.list_date,
+                    security_type=security.security_type,
+                    board=current_status.board if current_status is not None else None,
+                    universe_eligible=universe_eligibility.get(
+                        (security.id, bar.trade_date), False
+                    ),
                 )
 
             bars = tuple(
@@ -1532,13 +2097,7 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                 for bar, security in available_rows
                 if security.list_date <= bar.trade_date
             )
-            model = CostModel(
-                commission_rate=cost.commission_rate,
-                minimum_commission=cost.commission_min,
-                sell_stamp_duty_rate=cost.stamp_tax_sell_rate,
-                transfer_fee_rate=cost.transfer_rate,
-                version=cost.version,
-            )
+            model = _cost_model(cost)
             config = BacktestConfig(
                 start=run.start_date,
                 end=run.end_date,
@@ -1548,39 +2107,45 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                 validation_end=run.valid_end,
                 execution_mode=run.execution_price_mode,
                 fill_mode="FULL_OR_NONE",
+                oos_start=run.oos_start,
             )
-            data_version = batch.version
+            data_version = str(current_data_snapshot["data_batch_set_hash"])
             strategy_version = f"{strategy.code}:{strategy.version}"
+            strategy_parameters_value = snapshot.get("effective_parameters")
+            if not isinstance(strategy_parameters_value, dict):
+                raise StateConflictError("snapshotted strategy parameters are unavailable")
+            strategy_parameters = dict(strategy_parameters_value)
+            secondary_benchmark = run.secondary_benchmark_symbol
+            universe_benchmark_enabled = run.universe_benchmark_enabled
+            batch_snapshot_value = current_data_snapshot["data_batches"]
+            if not isinstance(batch_snapshot_value, list):
+                raise StateConflictError("snapshotted data batches are unavailable")
+            runner_data_batches = tuple(
+                dict(item) for item in batch_snapshot_value if isinstance(item, dict)
+            )
             run.status = "RUNNING"
             self._set_stage(session, run.id, "data_quality", "SUCCEEDED")
             self._set_stage(session, run.id, "replay", "RUNNING")
-            strategy_config = self._strategy_config(strategy.parameters)
-        service = BacktestApplicationService(
-            data_loader=lambda _: BacktestDataSlice(
-                available=True,
-                reason=None,
-                data_version=data_version,
-                information_cutoff_at=batch.information_cutoff_at,
-                bars=bars,
-            ),
-            order_loader=self._build_order_loader(
-                bars,
-                benchmark_symbol=run.benchmark_symbol,
-                strategy=StrongTrendStrategy(strategy_config),
-                end_date=run.end_date,
-            ),
-            runner=BacktestRunner(model),
-        )
         try:
-            result = service.execute(
-                BacktestRequest(
-                    config=config,
-                    data_batch_id=str(batch.id),
-                    data_version=data_version,
-                    strategy_version=strategy_version,
-                    information_cutoff_at=cutoff,
-                )
-            ).result
+            result = StatefulBacktestRunner(model).run(
+                config,
+                bars,
+                data_version=data_version,
+                strategy_version=strategy_version,
+                strategy_type=strategy_type,
+                strategy_parameters=strategy_parameters,
+                information_cutoff_at=cutoff,
+                strategy_implementation_version=implementation_version,
+                trading_dates=run_trade_dates,
+                rule_version=rule_version,
+                rule_config=rule_config,
+                secondary_benchmark=secondary_benchmark,
+                universe_benchmark_enabled=universe_benchmark_enabled,
+                suspended_symbols_by_date=suspended_by_date,
+                data_batches=runner_data_batches,
+                cost_config=current_cost_snapshot,
+                cost_config_hash=str(snapshot["cost_config_hash"]),
+            )
         except Exception as exc:
             with self._session() as session:
                 run = session.scalar(
@@ -1591,10 +2156,17 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                 )
                 if run is None:
                     return None
-                run.status = "FAILED"
+                unavailable = isinstance(exc, BenchmarkUnavailableError)
+                run.status = "UNAVAILABLE" if unavailable else "FAILED"
                 run.result_usable = False
                 run.result_summary = {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
-                self._set_stage(session, run.id, "replay", "FAILED", str(exc))
+                self._set_stage(
+                    session,
+                    run.id,
+                    "replay",
+                    "UNAVAILABLE" if unavailable else "FAILED",
+                    str(exc),
+                )
                 return self._run_record(run)
         with self._session() as session:
             run = session.scalar(
@@ -1626,7 +2198,15 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                     }
                 )
             )
-            self._persist_snapshots(session, run, result, run_trade_dates)
+            self._persist_snapshots(
+                session,
+                run,
+                result,
+                run_trade_dates,
+                warning_threshold=Decimal(str(rule_config["drawdown_stop_new"])),
+                review_threshold=Decimal(str(rule_config["drawdown_review_required"])),
+            )
+            self._persist_series(session, run, result)
             self._persist_metrics(session, run, result)
             session.add(
                 models.ReportArtifact(
@@ -1697,24 +2277,35 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                 select(models.BacktestRun).where(models.BacktestRun.run_no == run_id)
             )
             metrics = dict(record.get("result_summary", {}).get("metrics", {}))
+            persisted_segment_metrics: dict[str, dict[str, str]] = {}
             if run is not None:
-                metrics.update(
-                    {
-                        metric.metric_code: str(metric.metric_value)
-                        for metric in session.scalars(
-                            select(models.PerformanceMetric).where(
-                                models.PerformanceMetric.run_id == run.id
-                            )
-                        ).all()
-                    }
-                )
+                for metric in session.scalars(
+                    select(models.PerformanceMetric).where(
+                        models.PerformanceMetric.run_id == run.id
+                    )
+                ).all():
+                    key = f"{metric.series_code}:{metric.segment}"
+                    persisted_segment_metrics.setdefault(key, {})[metric.metric_code] = str(
+                        metric.metric_value
+                    )
+                    if metric.series_code == "STRATEGY" and metric.segment == "FULL":
+                        metrics[metric.metric_code] = str(metric.metric_value)
+        summary = record.get("result_summary", {})
         return {
             "run_id": run_id,
             "result_usable": record["result_usable"],
             "status": record["status"],
             "snapshot_hash": record.get("snapshot_hash"),
             "metrics": metrics,
-            "export": record.get("result_summary", {}).get("export"),
+            "segment_metrics": persisted_segment_metrics or summary.get("segment_metrics", {}),
+            "series": summary.get("series", {}),
+            "strategy_type": record.get("strategy_type"),
+            "effective_parameters": record.get("effective_parameters", {}),
+            "strategy_implementation_version": record.get("strategy_implementation_version"),
+            "engine_version": record.get("engine_version"),
+            "risk_state": summary.get("risk_state"),
+            "excess_returns": summary.get("excess_returns", {}),
+            "export": summary.get("export"),
             "unavailable_reasons": (
                 []
                 if record["result_usable"]
@@ -1751,8 +2342,12 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                         models.SecurityStatusHistory.security_id == security.id,
                         models.SecurityStatusHistory.effective_date <= trade_date,
                         models.SecurityStatusHistory.source_batch_id == batch.id,
+                        models.SecurityStatusHistory.observed_at <= batch.information_cutoff_at,
                     )
-                    .order_by(models.SecurityStatusHistory.effective_date.desc())
+                    .order_by(
+                        models.SecurityStatusHistory.effective_date.desc(),
+                        models.SecurityStatusHistory.observed_at.desc(),
+                    )
                 ).first()
                 is_excluded = bool(
                     status_row
@@ -2283,9 +2878,10 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
             )
             created.append(cost_alias)
         if (
-            rule_alias == "rule_v1"
+            rule_alias in {"rule_v1", "rule_v2"}
             and session.get(models.RuleConfigVersion, _stable_uuid(rule_alias)) is None
         ):
+            is_v2 = rule_alias == "rule_v2"
             session.add(
                 models.RuleConfigVersion(
                     id=_stable_uuid(rule_alias),
@@ -2293,7 +2889,16 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                     scope="A_SHARE_MAIN_BOARD",
                     config={
                         "seed_origin": "local-development",
-                        "baseline": "v1.1.0",
+                        "baseline": "engine-v2" if is_v2 else "v1.1.0",
+                        "max_investment_ratio": "0.70",
+                        "max_positions": 4,
+                        "max_position_ratio": "0.20",
+                        "max_industry_ratio": "0.35",
+                        "target_position_value": "3500",
+                        "lot_size": 100,
+                        "drawdown_stop_new": "0.06",
+                        "drawdown_review_required": "0.08",
+                        "automatic_risk_recovery": False,
                         "review_note": "Local research baseline; verify before production use.",
                     },
                     source_urls=[
@@ -2383,10 +2988,43 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
         metrics["yearly_returns"] = {
             key: str(value) for key, value in result.metrics.yearly_returns
         }
+        full_returns = {
+            item.series_code: item.metrics.total_return
+            for item in result.segment_metrics
+            if item.segment == "FULL" and item.metrics.total_return is not None
+        }
+        strategy_return = full_returns.get("STRATEGY")
+        excess_returns = {
+            benchmark: str(strategy_return - benchmark_return)
+            for benchmark in ("BENCHMARK_PRIMARY", "UNIVERSE_EQUAL_WEIGHT")
+            if strategy_return is not None
+            and (benchmark_return := full_returns.get(benchmark)) is not None
+        }
         return {
             "available": result.metrics.available,
+            "engine_version": result.engine_version,
+            "risk_state": result.risk_state,
             "metrics": metrics,
+            "excess_returns": excess_returns,
             "equity_curve": [str(value) for value in result.equity_curve],
+            "series": {
+                item.series_code: {
+                    "availability": item.availability,
+                    "points": [
+                        {"trade_date": trade_date.isoformat(), "value": str(value)}
+                        for trade_date, value in item.points
+                    ],
+                }
+                for item in result.series
+            },
+            "segment_metrics": {
+                f"{item.series_code}:{item.segment}": {
+                    key: str(value)
+                    for key in ("total_return", "max_drawdown", "sharpe")
+                    if (value := getattr(item.metrics, key)) is not None
+                }
+                for item in result.segment_metrics
+            },
             "skipped_orders": [
                 {
                     "execution_date": item.execution_date.isoformat(),
@@ -2412,139 +3050,11 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                         fill.signal_date.isoformat() if fill.signal_date is not None else None
                     ),
                     "industry": fill.industry,
+                    "trigger_reasons": list(fill.trigger_reasons),
                 }
                 for fill in result.fills
             ],
         }
-
-    @staticmethod
-    def _strategy_config(parameters: dict[str, object]) -> StrongTrendConfig:
-        defaults = StrongTrendConfig()
-        return StrongTrendConfig(
-            max_positions=int(str(parameters.get("max_positions", defaults.max_positions))),
-            max_per_industry=int(
-                str(parameters.get("max_per_industry", defaults.max_per_industry))
-            ),
-            min_return_5d=Decimal(str(parameters.get("min_return_5d", defaults.min_return_5d))),
-            max_return_5d=Decimal(str(parameters.get("max_return_5d", defaults.max_return_5d))),
-            min_amount_ratio=Decimal(
-                str(parameters.get("min_amount_ratio", defaults.min_amount_ratio))
-            ),
-            max_amount_ratio=Decimal(
-                str(parameters.get("max_amount_ratio", defaults.max_amount_ratio))
-            ),
-            max_holding_days=int(
-                str(parameters.get("max_holding_days", defaults.max_holding_days))
-            ),
-            drawdown_exit=Decimal(str(parameters.get("drawdown_exit", defaults.drawdown_exit))),
-        )
-
-    @staticmethod
-    def _build_order_loader(
-        bars: tuple[MarketBar, ...],
-        *,
-        benchmark_symbol: str,
-        strategy: StrongTrendStrategy,
-        end_date: date,
-    ) -> Any:
-        strategy_bars = tuple(
-            StrategyDailyBar(
-                symbol=bar.symbol,
-                trade_date=bar.trade_date,
-                close=bar.close or Decimal("0"),
-                amount=bar.amount or Decimal("0"),
-                available_at=bar.available_at,
-                is_suspended=bar.is_suspended,
-                is_st=bar.is_st,
-                is_delisted=bar.is_delisted,
-                is_limit_up=bar.limit_up,
-                industry=bar.industry,
-            )
-            for bar in bars
-            if bar.close is not None
-        )
-        market_bars = tuple(bar for bar in strategy_bars if bar.symbol == benchmark_symbol)
-        symbols = tuple(
-            sorted({bar.symbol for bar in strategy_bars if bar.symbol != benchmark_symbol})
-        )
-        trade_dates = tuple(sorted({bar.trade_date for bar in strategy_bars}))
-
-        def load_orders(
-            request: BacktestRequest, _: tuple[MarketBar, ...]
-        ) -> dict[date, list[Order]]:
-            orders: dict[date, list[Order]] = {}
-            seen_symbols: set[str] = set()
-            for signal_date in trade_dates:
-                if signal_date >= end_date:
-                    continue
-                features = tuple(
-                    build_feature_snapshot(
-                        strategy_bars,
-                        market_bars,
-                        symbol=symbol,
-                        trade_date=signal_date,
-                        information_cutoff_at=request.information_cutoff_at,
-                    )
-                    for symbol in symbols
-                )
-                next_trade_date = next(
-                    (value for value in trade_dates if value > signal_date), None
-                )
-                if next_trade_date is None or next_trade_date > end_date:
-                    continue
-                for signal in strategy.select_candidates(
-                    features, information_cutoff_at=request.information_cutoff_at
-                ):
-                    if signal.symbol in seen_symbols:
-                        continue
-                    seen_symbols.add(signal.symbol)
-                    orders.setdefault(next_trade_date, []).append(
-                        Order(
-                            "BUY",
-                            signal.symbol,
-                            100,
-                            signal_date=signal.trade_date,
-                            industry=signal.industry,
-                        )
-                    )
-                    entry_index = trade_dates.index(next_trade_date)
-                    exit_signal_index = entry_index + strategy.config.max_holding_days
-                    exit_execution_index = exit_signal_index + 1
-                    if exit_execution_index < len(trade_dates):
-                        exit_signal_date = trade_dates[exit_signal_index]
-                        exit_execution_date = trade_dates[exit_execution_index]
-                        exit_feature = build_feature_snapshot(
-                            strategy_bars,
-                            market_bars,
-                            symbol=signal.symbol,
-                            trade_date=exit_signal_date,
-                            information_cutoff_at=request.information_cutoff_at,
-                        )
-                        entry_feature = next(
-                            item for item in features if item.symbol == signal.symbol
-                        )
-                        exit_signal = strategy.exit_signal(
-                            exit_feature,
-                            entry_price=entry_feature.close or Decimal("0"),
-                            held_trading_days=strategy.config.max_holding_days,
-                            rank=1,
-                            candidate_count=1,
-                            market_closed_streak=0,
-                            next_trade_date=exit_execution_date,
-                        )
-                        if exit_signal is not None:
-                            orders.setdefault(exit_execution_date, []).append(
-                                Order(
-                                    "SELL",
-                                    signal.symbol,
-                                    100,
-                                    signal_date=exit_signal.trade_date,
-                                    industry=signal.industry,
-                                )
-                            )
-            return orders
-
-        return load_orders
 
     @staticmethod
     def _persist_snapshots(
@@ -2552,8 +3062,16 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
         run: models.BacktestRun,
         result: BacktestResult,
         trade_dates: tuple[date, ...],
+        *,
+        warning_threshold: Decimal,
+        review_threshold: Decimal,
     ) -> None:
+        risk_state = "NORMAL"
         for trade_date, snapshot in zip(trade_dates, result.ledger_snapshots, strict=False):
+            if snapshot.drawdown >= review_threshold:
+                risk_state = "REVIEW_REQUIRED"
+            elif snapshot.drawdown >= warning_threshold and risk_state == "NORMAL":
+                risk_state = "STOP_NEW"
             session.add(
                 models.PortfolioSnapshot(
                     id=uuid4(),
@@ -2565,34 +3083,57 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
                     equity=snapshot.equity,
                     high_watermark=snapshot.high_water_mark,
                     drawdown=snapshot.drawdown,
-                    risk_state="NORMAL",
+                    risk_state=risk_state,
                 )
             )
 
     @staticmethod
-    def _persist_metrics(session: Session, run: models.BacktestRun, result: BacktestResult) -> None:
-        values = {
-            "total_return": result.metrics.total_return,
-            "max_drawdown": result.metrics.max_drawdown,
-            "sharpe": result.metrics.sharpe,
-            "win_rate": result.metrics.win_rate,
-            "profit_loss_ratio": result.metrics.profit_loss_ratio,
-            "average_holding_period": result.metrics.average_holding_period,
-            "turnover": result.metrics.turnover,
-            "total_cost": result.metrics.total_cost,
-        }
-        for code, value in values.items():
-            if value is not None:
+    def _persist_series(session: Session, run: models.BacktestRun, result: BacktestResult) -> None:
+        for item in result.series:
+            for trade_date, value in item.points:
                 session.add(
-                    models.PerformanceMetric(
+                    models.BacktestSeriesPoint(
                         id=uuid4(),
                         run_id=run.id,
-                        segment="FULL",
-                        metric_code=code,
-                        metric_value=value,
-                        calculation_note="BacktestRunner deterministic replay",
+                        series_code=item.series_code,
+                        trade_date=trade_date,
+                        value=value,
+                        availability=item.availability,
                     )
                 )
+
+    @staticmethod
+    def _persist_metrics(session: Session, run: models.BacktestRun, result: BacktestResult) -> None:
+        records = result.segment_metrics or ()
+        for record in records:
+            values = {
+                "total_return": record.metrics.total_return,
+                "max_drawdown": record.metrics.max_drawdown,
+                "sharpe": record.metrics.sharpe,
+            }
+            if record.series_code == "STRATEGY":
+                values.update(
+                    {
+                        "win_rate": record.metrics.win_rate,
+                        "profit_loss_ratio": record.metrics.profit_loss_ratio,
+                        "average_holding_period": record.metrics.average_holding_period,
+                        "turnover": record.metrics.turnover,
+                        "total_cost": record.metrics.total_cost,
+                    }
+                )
+            for code, value in values.items():
+                if value is not None:
+                    session.add(
+                        models.PerformanceMetric(
+                            id=uuid4(),
+                            run_id=run.id,
+                            series_code=record.series_code,
+                            segment=record.segment,
+                            metric_code=code,
+                            metric_value=value,
+                            calculation_note="engine-v2 deterministic event loop",
+                        )
+                    )
 
     @classmethod
     def _normalize_daily_bar_row(cls, row: dict[str, Any]) -> dict[str, Any]:
@@ -2600,6 +3141,24 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
         raw_high = cls._decimal(row.get("raw_high", row.get("high")))
         raw_low = cls._decimal(row.get("raw_low", row.get("low")))
         raw_close = cls._decimal(row.get("raw_close", row.get("close")))
+        available_at = cls._timestamp(row.get("available_at"))
+        status_observed_at = (
+            cls._timestamp(
+                row.get(
+                    "status_observed_at", row.get("status_available_at", row.get("observed_at"))
+                )
+            )
+            or available_at
+        )
+        industry_observed_at = (
+            cls._timestamp(
+                row.get(
+                    "industry_observed_at",
+                    row.get("industry_available_at", row.get("observed_at")),
+                )
+            )
+            or available_at
+        )
         return {
             "symbol": row.get("symbol"),
             "trade_date": cls._as_date(row.get("trade_date")),
@@ -2614,7 +3173,15 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
             "volume": cls._decimal(row.get("volume")),
             "amount": cls._decimal(row.get("amount")),
             "adjust_factor": cls._decimal(row.get("adjust_factor", row.get("adjustment_factor"))),
-            "available_at": cls._timestamp(row.get("available_at")),
+            "available_at": available_at,
+            "status_observed_at": status_observed_at,
+            "industry_observed_at": industry_observed_at,
+            "open_limit_up": cls._optional_truth_fallback(row, "open_limit_up", "limit_up"),
+            "open_limit_down": cls._optional_truth_fallback(row, "open_limit_down", "limit_down"),
+            "close_limit_up": cls._optional_truth_fallback(row, "close_limit_up", "limit_up"),
+            "close_limit_down": cls._optional_truth_fallback(row, "close_limit_down", "limit_down"),
+            "limit_up": cls._optional_truth_fallback(row, "close_limit_up", "limit_up"),
+            "limit_down": cls._optional_truth_fallback(row, "close_limit_down", "limit_down"),
             "is_st": cls._truth(row.get("is_st")),
             "is_suspended": cls._truth(row.get("is_suspended"))
             or str(row.get("status", "")).upper() == "SUSPENDED",
@@ -2650,10 +3217,10 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
     @staticmethod
     def _timestamp(value: object) -> datetime | None:
         if isinstance(value, datetime):
-            return value
+            return as_utc(value)
         if isinstance(value, str):
             try:
-                return datetime.fromisoformat(value)
+                return as_utc(datetime.fromisoformat(value))
             except ValueError:
                 return None
         return None
@@ -2661,6 +3228,86 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
     @staticmethod
     def _truth(value: object) -> bool:
         return value is True or (isinstance(value, str) and value.lower() in {"true", "1", "yes"})
+
+    @classmethod
+    def _optional_truth(cls, row: dict[str, Any], key: str) -> bool | None:
+        if key not in row or row.get(key) in (None, ""):
+            return None
+        return cls._truth(row[key])
+
+    @classmethod
+    def _optional_truth_fallback(cls, row: dict[str, Any], key: str, fallback: str) -> bool | None:
+        return cls._optional_truth(row, key) if key in row else cls._optional_truth(row, fallback)
+
+    @staticmethod
+    def _limit_state(
+        bar: models.DailyBar,
+        _status: models.SecurityStatusHistory | None,
+        _previous: models.DailyBar | None,
+    ) -> tuple[bool, bool, bool]:
+        """Return only provider-proven daily limit evidence; otherwise fail closed."""
+        open_limit_up = getattr(bar, "open_limit_up", None)
+        open_limit_down = getattr(bar, "open_limit_down", None)
+        if open_limit_up is not None and open_limit_down is not None:
+            return bool(open_limit_up), bool(open_limit_down), True
+        return False, False, False
+
+    @staticmethod
+    def _status_as_of(
+        rows: Sequence[models.SecurityStatusHistory],
+        trade_date: date,
+        information_cutoff_at: datetime,
+        batch_priority: dict[UUID, int],
+    ) -> models.SecurityStatusHistory | None:
+        candidates = [
+            row
+            for row in rows
+            if row.source_batch_id in batch_priority
+            and row.effective_date <= trade_date
+            and as_utc(row.observed_at) <= as_utc(information_cutoff_at)
+        ]
+        return (
+            max(
+                candidates,
+                key=lambda item: (
+                    item.effective_date,
+                    batch_priority[item.source_batch_id],
+                ),
+            )
+            if candidates
+            else None
+        )
+
+    @staticmethod
+    def _industry_as_of(
+        rows: Sequence[models.IndustryMembershipHistory],
+        trade_date: date,
+        information_cutoff_at: datetime,
+        batch_priority: dict[UUID, int],
+    ) -> tuple[models.IndustryMembershipHistory | None, str | None]:
+        candidates = [
+            row
+            for row in rows
+            if row.source_batch_id in batch_priority
+            and row.effective_from <= trade_date
+            and as_utc(row.observed_at) <= as_utc(information_cutoff_at)
+        ]
+        if not candidates:
+            return None, None
+        winning_rank = max(
+            (item.effective_from, batch_priority[item.source_batch_id]) for item in candidates
+        )
+        winners = [
+            item
+            for item in candidates
+            if (item.effective_from, batch_priority[item.source_batch_id]) == winning_rank
+        ]
+        if len({item.industry_code for item in winners}) != 1:
+            return None, "industry history has an unresolved selected-batch tie"
+        winner = winners[0]
+        if winner.effective_to is not None and trade_date > winner.effective_to:
+            return None, None
+        return winner, None
 
     @staticmethod
     def _exchange(symbol: str) -> str:
@@ -2700,13 +3347,17 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
 
     @staticmethod
     def _strategy_record(strategy: models.StrategyVersion) -> dict[str, Any]:
+        definition = get_strategy_definition(strategy.strategy_type)
         return {
             "strategy_version_id": str(strategy.id),
             "owner_id": str(strategy.created_by),
             "name": strategy.code,
+            "strategy_type": strategy.strategy_type,
             "status": strategy.status,
             "version": strategy.version,
             "parameters": strategy.parameters,
+            "effective_parameters": strategy.parameters,
+            "implementation_version": definition.implementation_version,
             "change_reason": strategy.change_reason,
         }
 
@@ -2714,6 +3365,7 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
     def _run_record(run: models.BacktestRun | None) -> dict[str, Any]:
         if run is None:
             raise ValueError("run is required")
+        config_snapshot = run.config_snapshot or {}
         return {
             "run_id": run.run_no,
             "owner_id": str(run.created_by),
@@ -2728,7 +3380,16 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
             "rule_config_id": str(run.rule_config_id),
             "start_date": run.start_date.isoformat(),
             "end_date": run.end_date.isoformat(),
-            "created_at": _as_utc(run.created_at).isoformat(),
+            "created_at": as_utc(run.created_at).isoformat(),
+            "data_batch_ids": config_snapshot.get("data_batch_ids", [str(run.data_batch_id)]),
+            "strategy_type": config_snapshot.get("strategy_type", "STRONG_TREND"),
+            "effective_parameters": config_snapshot.get("effective_parameters", {}),
+            "strategy_implementation_version": config_snapshot.get(
+                "strategy_implementation_version"
+            ),
+            "engine_version": config_snapshot.get("engine_version", "engine-v1"),
+            "cost_config_hash": config_snapshot.get("cost_config_hash"),
+            "data_batch_set_hash": config_snapshot.get("data_batch_set_hash"),
         }
 
     @staticmethod
@@ -2750,7 +3411,13 @@ class SqlAlchemyResearchRepository(InMemoryResearchRepository):
             "volume": str(bar.volume),
             "amount": str(bar.amount),
             "adjust_factor": str(bar.adjust_factor),
-            "available_at": _as_utc(bar.available_at).isoformat() if bar.available_at else None,
+            "available_at": as_utc(bar.available_at).isoformat() if bar.available_at else None,
+            "open_limit_up": bar.open_limit_up,
+            "open_limit_down": bar.open_limit_down,
+            "close_limit_up": bar.close_limit_up,
+            "close_limit_down": bar.close_limit_down,
+            "limit_up": bar.limit_up,
+            "limit_down": bar.limit_down,
             "data_batch_id": str(batch.id),
         }
 

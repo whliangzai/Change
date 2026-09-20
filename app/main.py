@@ -214,7 +214,7 @@ def create_app(
                     actor_roles=("SYSTEM",),
                     action="LOCAL_DEFAULT_CONFIG_INITIALIZE",
                     object_type="configuration_versions",
-                    object_id="cost_v1,rule_v1",
+                    object_id="cost_v1,rule_v1,rule_v2",
                     request_id="startup",
                     result="SUCCESS",
                     after_summary=seed_result,

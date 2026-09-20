@@ -5,6 +5,7 @@
   "daily": {"code": 0, "data": {"fields": ["ts_code", "trade_date", "open", "high", "low", "close", "vol", "amount"], "items": [["000001.SZ", "20250102", 10, 11, 9, 10.5, 100, 1000], ["600000.SH", "20250102", 10, 11, 9, 10.5, 100, 1000]]}},
   "index_daily": {"code": 0, "data": {"fields": ["ts_code", "trade_date", "open", "high", "low", "close", "vol", "amount"], "items": [["000300.SH", "20250102", 10, 11, 9, 10.5, 100, 1000], ["000001.SH", "20250102", 10, 11, 9, 10.5, 100, 1000]]}},
   "adj_factor": {"code": 0, "data": {"fields": ["ts_code", "trade_date", "adj_factor"], "items": [["000001.SZ", "20250102", 1], ["600000.SH", "20250102", 1]]}},
+  "stk_limit": {"code": 0, "data": {"fields": ["ts_code", "trade_date", "up_limit", "down_limit"], "items": [["000001.SZ", "20250102", 11, 9], ["600000.SH", "20250102", 11, 9]]}},
   "stock_st": {"code": 0, "data": {"fields": ["ts_code", "name", "trade_date", "type", "type_name"], "items": [["000001.SZ", "*ST平安", "20250102", "ST", "风险警示板"]]}},
   "suspend_d": {"code": 0, "data": {"fields": ["ts_code", "trade_date", "suspend_timing", "suspend_type"], "items": []}},
   "index_member_all": {"code": 0, "data": {"fields": ["l1_code", "l1_name", "l2_code", "l2_name", "l3_code", "l3_name", "ts_code", "name", "in_date", "out_date", "is_new"], "items": [["801010.SI", "农林牧渔", "801011.SI", "林业", "801011.SI", "林业", "000001.SZ", "平安银行", "20100101", null, "Y"], ["801780.SI", "银行", "801781.SI", "大型银行", "801781.SI", "大型银行", "600000.SH", "浦发银行", "20100101", null, "Y"]]}}

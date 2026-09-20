@@ -103,6 +103,38 @@ def test_provenance_reports_timezone_issues_without_comparing_naive_and_aware() 
     assert {issue.field for issue in captured.value.issues} == {"available_at"}
 
 
+def test_causal_provenance_requires_data_to_be_available_by_the_cutoff(tmp_path) -> None:
+    available_at = datetime(2024, 1, 2, 18, 30, tzinfo=UTC)
+    cutoff = datetime(2024, 1, 2, 19, 0, tzinfo=UTC)
+
+    QualityGate().validate_batch_provenance(
+        as_of_date=date(2024, 1, 2),
+        available_at=available_at,
+        information_cutoff_at=cutoff,
+    )
+    source = tmp_path / "causal.csv"
+    source.write_text("symbol,trade_date\n600000.SH,2024-01-02\n", encoding="utf-8")
+    AuthorizedFileImporter().import_file(
+        source,
+        available_at=available_at,
+        information_cutoff_at=cutoff,
+    )
+
+    earlier_cutoff = datetime(2024, 1, 2, 18, 0, tzinfo=UTC)
+    with pytest.raises(DataQualityError, match="not available by information cutoff"):
+        QualityGate().validate_batch_provenance(
+            as_of_date=date(2024, 1, 2),
+            available_at=available_at,
+            information_cutoff_at=earlier_cutoff,
+        )
+    with pytest.raises(ValueError, match="not available by information cutoff"):
+        AuthorizedFileImporter().import_file(
+            source,
+            available_at=available_at,
+            information_cutoff_at=earlier_cutoff,
+        )
+
+
 def test_quality_gate_rejects_an_empty_daily_bar_dataset() -> None:
     with pytest.raises(DataQualityError) as captured:
         QualityGate().validate_daily_bars([])

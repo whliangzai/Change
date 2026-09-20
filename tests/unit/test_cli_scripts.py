@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from uuid import uuid4
 
 import pytest
@@ -186,6 +186,7 @@ def test_backtest_cli_executes_against_persisted_repository_and_is_replayable(
     monkeypatch, capsys, tmp_path
 ) -> None:
     from sqlalchemy import create_engine, func, select
+    from sqlalchemy.orm import Session
 
     from app.infrastructure.db import models
     from app.infrastructure.db.base import Base
@@ -196,22 +197,31 @@ def test_backtest_cli_executes_against_persisted_repository_and_is_replayable(
     Base.metadata.create_all(engine)
     repository = SqlAlchemyResearchRepository.from_engine(engine)
     repository.initialize_local_default_versions()
+    dates = tuple(date(2026, 9, 3) - timedelta(days=offset) for offset in range(89, -1, -1))
     rows = [
         {
             "symbol": symbol,
-            "trade_date": f"2026-09-{day:02d}",
+            "trade_date": trade_date.isoformat(),
             "open": "10.00" if symbol == "600000.SH" else "100.00",
             "high": "10.20" if symbol == "600000.SH" else "100.20",
             "low": "9.90" if symbol == "600000.SH" else "99.90",
             "close": "10.10" if symbol == "600000.SH" else "100.10",
             "volume": "10000",
-            "amount": "101000.00",
+            "amount": "30000000.00",
             "adjustment_factor": "1.0",
-            "available_at": f"2026-09-{day:02d}T18:00:00+00:00",
+            "available_at": f"{trade_date.isoformat()}T18:00:00+00:00",
+            "limit_up": False,
+            "limit_down": False,
         }
-        for day in range(1, 4)
+        for trade_date in dates
         for symbol in ("600000.SH", "000300.SH")
     ]
+    with Session(engine) as session:
+        session.add_all(
+            models.TradeCalendar(exchange="SSE", trade_date=trade_date, is_open=True)
+            for trade_date in dates
+        )
+        session.commit()
     batch = repository.import_daily_bars(
         owner_id,
         {"source_name": "licensed-csv", "data_type": "DAILY_BAR", "file_location": "bars.csv"},
@@ -228,7 +238,7 @@ def test_backtest_cli_executes_against_persisted_repository_and_is_replayable(
             "data_batch_id": batch["batch_id"],
             "strategy_version_id": strategy["strategy_version_id"],
             "cost_config_id": "cost_v1",
-            "rule_config_id": "rule_v1",
+            "rule_config_id": "rule_v2",
             "owner_id": str(owner_id),
         }
     )

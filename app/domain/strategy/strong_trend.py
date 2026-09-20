@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 
+from app.domain.causality import available_at_or_before
 from app.domain.strategy.features import FeatureSnapshot
 
 
@@ -37,6 +38,7 @@ class ExitSignal:
     trade_date: date
     plan_date: date
     reason: str
+    reasons: tuple[str, ...] = ()
 
 
 def _rank(values: list[Decimal], value: Decimal) -> Decimal:
@@ -59,9 +61,7 @@ class StrongTrendStrategy:
         *,
         information_cutoff_at: datetime | None = None,
     ) -> bool:
-        if information_cutoff_at is not None and (
-            feature.available_at is None or feature.available_at > information_cutoff_at
-        ):
+        if not available_at_or_before(feature.available_at, information_cutoff_at):
             return False
         if any(
             value is None
@@ -96,7 +96,7 @@ class StrongTrendStrategy:
             and not feature.is_limit_up
         )
 
-    def select_candidates(
+    def rank_candidates(
         self,
         features: Iterable[FeatureSnapshot],
         *,
@@ -124,18 +124,34 @@ class StrongTrendStrategy:
             score += Decimal("0.25") * _rank(ratios, feature.amount_ratio)
             scored.append((score, feature))
         scored.sort(key=lambda item: (-item[0], item[1].symbol))
+        return [
+            EntrySignal(feature.symbol, feature.trade_date, score, index, feature.industry)
+            for index, (score, feature) in enumerate(scored, start=1)
+        ]
+
+    def select_candidates(
+        self,
+        features: Iterable[FeatureSnapshot],
+        *,
+        information_cutoff_at: datetime | None = None,
+    ) -> list[EntrySignal]:
+        ranked = self.rank_candidates(features, information_cutoff_at=information_cutoff_at)
         selected: list[EntrySignal] = []
         industries: dict[str | None, int] = {}
-        for score, feature in scored:
+        for signal in ranked:
             if len(selected) >= self.config.max_positions:
                 break
-            count = industries.get(feature.industry, 0)
+            count = industries.get(signal.industry, 0)
             if count >= self.config.max_per_industry:
                 continue
-            industries[feature.industry] = count + 1
+            industries[signal.industry] = count + 1
             selected.append(
                 EntrySignal(
-                    feature.symbol, feature.trade_date, score, len(selected) + 1, feature.industry
+                    signal.symbol,
+                    signal.trade_date,
+                    signal.score,
+                    len(selected) + 1,
+                    signal.industry,
                 )
             )
         return selected
@@ -152,11 +168,14 @@ class StrongTrendStrategy:
         candidate_count: int,
         market_closed_streak: int,
         next_trade_date: date,
+        eligible: bool = True,
     ) -> ExitSignal | None:
         reasons: list[str] = []
         if held_trading_days >= self.config.max_holding_days:
             reasons.append("MAX_HOLDING_DAYS")
-        if candidate_count > 0 and rank > Decimal(candidate_count) / Decimal("2"):
+        if not eligible:
+            reasons.append("NOT_ELIGIBLE")
+        elif candidate_count > 0 and rank > Decimal(candidate_count) / Decimal("2"):
             reasons.append("RANK_OUT_OF_POOL")
         if feature.close is not None and feature.close <= entry_price * (
             Decimal("1") - self.config.drawdown_exit
@@ -165,7 +184,13 @@ class StrongTrendStrategy:
         if market_closed_streak >= 2:
             reasons.append("MARKET_SWITCH_OFF")
         return (
-            ExitSignal(feature.symbol, feature.trade_date, next_trade_date, reasons[0])
+            ExitSignal(
+                feature.symbol,
+                feature.trade_date,
+                next_trade_date,
+                reasons[0],
+                tuple(reasons),
+            )
             if reasons
             else None
         )

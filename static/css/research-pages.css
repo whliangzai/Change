@@ -77,6 +77,11 @@
 .strategy-create-panel form { margin-top: 16px; }
 .strategy-create-panel .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .strategy-create-panel label, .strategy-lookup-form label { color: var(--ink); }
+.strategy-create-panel .parameter-field { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.parameter-label { color: var(--ink-strong); font-size: 13px; font-weight: 700; }
+.parameter-help { min-height: 2.8em; color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.4; }
+.parameter-toggle-control { display: inline-flex; align-items: center; gap: 9px; width: max-content; min-height: var(--control-height); padding: 0 12px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 600; }
+.parameter-toggle-control input[type="checkbox"] { width: 18px; min-width: 18px; height: 18px; min-height: 18px; margin: 0; padding: 0; accent-color: var(--accent); }
 .strategy-create-panel .actions { margin-top: 0; }
 .visually-hidden-summary { display: none; }
 .research-page #strategy-review { grid-template-columns: minmax(180px, 340px) minmax(0, 1fr); }
@@ -89,6 +94,19 @@
 .table-empty strong { color: var(--ink-strong); font-size: 13px; }
 .table-empty span { font-size: 13px; }
 [data-page="backtest-detail"] .section-title > span { margin-left: auto; color: var(--muted); }
+[data-page="backtest-detail"] .panel > h3 { margin: 22px 0 8px; font-size: 13px; }
+.equity-series { margin: 18px 0 0; }
+.equity-series figcaption { margin-bottom: 8px; color: var(--ink-strong); font-weight: 700; }
+.equity-series svg { display: block; width: 100%; height: 320px; border-bottom: 1px solid var(--line); }
+.equity-line { vector-effect: non-scaling-stroke; stroke-width: 2.25; }
+.chart-grid { vector-effect: non-scaling-stroke; stroke: var(--line); stroke-width: 1; }
+.chart-label { fill: var(--muted); stroke: none !important; font: 12px var(--font-mono); }
+.equity-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 8px; color: var(--muted); font-size: 12px; }
+.equity-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.equity-legend span::before { width: 18px; height: 2px; background: var(--series-color); content: ""; }
+.metric-breakdown { display: grid; grid-template-columns: minmax(7rem, max-content) minmax(0, 1fr); gap: 4px 12px; margin: 0; }
+.metric-breakdown dt { color: var(--muted); font-size: 12px; font-weight: 600; }
+.metric-breakdown dd { margin: 0; overflow-wrap: anywhere; }
 
 .report-picker .section-title { align-items: flex-start; }
 .report-picker .filters { margin: 16px 0 12px; }
@@ -131,4 +149,15 @@
   [data-page="data-quality"] #batch-result-count { flex: 1 1 100%; margin-left: 0; text-align: left; }
   .research-page #strategy-review .actions { grid-column: auto; }
   .report-cost-panel .table-wrap, #report-deviation-table { min-width: 0; }
+  .parameter-help { min-height: 0; }
+  .segment-metrics-wrap { overflow: visible; border: 0; background: transparent; }
+  #segment-metrics, #segment-metrics tbody { display: block; width: 100%; min-width: 0; }
+  #segment-metrics thead { display: none; }
+  #segment-metrics caption { display: block; padding: 0 0 8px; text-align: left; }
+  #segment-metrics tbody { display: grid; gap: 8px; }
+  #segment-metrics tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--surface); }
+  #segment-metrics th { grid-column: 1 / -1; padding: 10px 12px; border: 0; background: var(--surface-subtle); white-space: normal; overflow-wrap: anywhere; }
+  #segment-metrics td { display: block; min-width: 0; padding: 9px 8px; border: 0; border-right: 1px solid var(--line); text-align: left; overflow-wrap: anywhere; }
+  #segment-metrics td:last-child { border-right: 0; }
+  #segment-metrics td::before { display: block; margin-bottom: 3px; color: var(--muted); content: attr(data-label); font-size: 11px; font-weight: 600; }
 }

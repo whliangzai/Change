@@ -25,6 +25,7 @@ class BacktestConfig:
     validation_end: date | None = None
     execution_mode: str = "NEXT_OPEN_ADJUSTED"
     fill_mode: str = "FULL_OR_NONE"
+    oos_start: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +53,10 @@ class BacktestResult:
     ledger_snapshots: tuple[LedgerSnapshot, ...] = ()
     skipped_orders: tuple[SkippedOrder, ...] = ()
     fills: tuple[Fill, ...] = ()
+    engine_version: str = "engine-v1"
+    series: tuple[BacktestSeries, ...] = ()
+    segment_metrics: tuple[SeriesSegmentMetrics, ...] = ()
+    risk_state: str = "NORMAL"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +64,20 @@ class SkippedOrder:
     execution_date: date
     symbol: str
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestSeries:
+    series_code: str
+    points: tuple[tuple[date, Decimal], ...]
+    availability: str = "AVAILABLE"
+
+
+@dataclass(frozen=True, slots=True)
+class SeriesSegmentMetrics:
+    series_code: str
+    segment: str
+    metrics: Metrics
 
 
 def _json_default(value: object) -> str:
@@ -114,6 +133,8 @@ class BacktestRunner:
                     "is_suspended": bar.is_suspended,
                     "limit_up": bar.limit_up,
                     "limit_down": bar.limit_down,
+                    "close_limit_up": bar.close_limit_up,
+                    "close_limit_down": bar.close_limit_down,
                     "available_quantity": bar.available_quantity,
                 }
                 for bar in ordered

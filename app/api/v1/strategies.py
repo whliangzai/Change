@@ -8,6 +8,7 @@ from app.api.v1.common import audit, repository
 from app.core.dependencies import require_roles
 from app.core.errors import ApplicationError
 from app.core.security import Principal, Role
+from app.domain.strategy.registry import strategy_catalog
 from app.schemas.strategy import StrategyCreate, StrategyReview
 
 router = APIRouter(prefix="/api/v1", tags=["strategies"])
@@ -41,6 +42,12 @@ def list_strategies(
     return _success(
         request, repository(request).list_strategies(principal.user_id, status, page, page_size)
     )
+
+
+@router.get("/strategies/catalog")
+def get_strategy_catalog(request: Request, principal: Reader) -> JSONResponse:
+    del principal
+    return _success(request, {"items": strategy_catalog()})
 
 
 @router.post("/strategies/{strategy_id}/submit-review")

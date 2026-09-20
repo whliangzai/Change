@@ -20,6 +20,9 @@ class MarketBar:
     is_suspended: bool = False
     limit_up: bool = False
     limit_down: bool = False
+    limit_status_known: bool = True
+    close_limit_up: bool | None = False
+    close_limit_down: bool | None = False
     available_quantity: int | None = None
     amount: Decimal | None = None
     available_at: datetime | None = None
@@ -27,6 +30,9 @@ class MarketBar:
     is_delisted: bool = False
     industry: str | None = None
     list_date: date | None = None
+    security_type: str | None = None
+    board: str | None = None
+    universe_eligible: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +43,7 @@ class Order:
     fill_mode: str = "FULL_OR_NONE"
     signal_date: date | None = None
     industry: str | None = None
+    reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +59,7 @@ class Fill:
     execution_date: date | None = None
     signal_date: date | None = None
     industry: str | None = None
+    trigger_reasons: tuple[str, ...] = ()
 
 
 class ExecutionSimulator:
@@ -78,6 +86,17 @@ class ExecutionSimulator:
                 reason="MISSING_OPEN_OR_SUSPENDED",
                 unfilled_quantity=order.quantity,
             )
+        if not bar.limit_status_known:
+            return Fill(
+                "UNFILLED",
+                side,
+                order.symbol,
+                0,
+                None,
+                reason="LIMIT_STATUS_UNKNOWN",
+                unfilled_quantity=order.quantity,
+                trigger_reasons=order.reasons,
+            )
         if (side == "BUY" and bar.limit_up) or (side == "SELL" and bar.limit_down):
             return Fill(
                 "UNFILLED",
@@ -90,8 +109,7 @@ class ExecutionSimulator:
             )
         if bar.available_quantity is not None and bar.available_quantity < 0:
             raise ValueError("available quantity cannot be negative")
-        adjustment = Decimal("1.002") if side == "BUY" else Decimal("0.998")
-        adjusted_price = bar.open * adjustment
+        adjusted_price = self.cost_model.execution_price(side=side, open_price=bar.open)
         if adjusted_price < bar.low or adjusted_price > bar.high:
             return Fill(
                 "UNFILLED",

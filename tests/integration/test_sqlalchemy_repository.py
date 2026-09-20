@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
 
 from app.infrastructure.db import models
 from app.infrastructure.db.base import Base
@@ -75,7 +76,7 @@ def test_published_strategy_and_backtest_run_survive_repository_restart(tmp_path
     owner_id = uuid4()
     repository = SqlAlchemyResearchRepository.from_engine(engine)
     repository.initialize_local_default_versions()
-    batch = repository.create_batch(
+    batch = repository.import_daily_bars(
         owner_id,
         {
             "source_name": "licensed-csv",
@@ -84,7 +85,37 @@ def test_published_strategy_and_backtest_run_survive_repository_restart(tmp_path
             "license_note": "licensed",
             "date_to": "2026-09-03",
         },
+        [
+            {
+                "symbol": symbol,
+                "trade_date": date(2026, 1, day).isoformat(),
+                "open": price,
+                "high": price,
+                "low": price,
+                "close": price,
+                "volume": "10000",
+                "amount": "100000",
+                "adjustment_factor": "1",
+                "available_at": f"2026-01-{day:02d}T18:00:00+00:00",
+                "open_limit_up": False,
+                "open_limit_down": False,
+                "close_limit_up": False,
+                "close_limit_down": False,
+            }
+            for day in range(1, 32)
+            for symbol, price in (("600000.SH", "10"), ("000300.SH", "100"))
+        ],
     )
+    with Session(engine) as session:
+        session.add_all(
+            models.TradeCalendar(
+                exchange="SSE",
+                trade_date=date(2026, 1, day),
+                is_open=True,
+            )
+            for day in range(1, 32)
+        )
+        session.commit()
     strategy = repository.create_strategy(
         owner_id,
         {"name": "trend", "parameters": {"lookback": 20}, "change_reason": "initial"},
@@ -93,15 +124,13 @@ def test_published_strategy_and_backtest_run_survive_repository_restart(tmp_path
         strategy["strategy_version_id"], owner_id, "PUBLISH", "reviewed", allow_reviewer=True
     )
     assert published is not None
-    repository.set_batch_quality(batch["batch_id"], owner_id, "AVAILABLE")
-
     restarted = SqlAlchemyResearchRepository.from_engine(engine)
     assert restarted.dependencies_available(
         {
             "data_batch_id": batch["batch_id"],
             "strategy_version_id": strategy["strategy_version_id"],
             "cost_config_id": "cost_v1",
-            "rule_config_id": "rule_v1",
+            "rule_config_id": "rule_v2",
         }
     )
     run = restarted.create_run(
@@ -110,7 +139,7 @@ def test_published_strategy_and_backtest_run_survive_repository_restart(tmp_path
             "data_batch_id": batch["batch_id"],
             "strategy_version_id": strategy["strategy_version_id"],
             "cost_config_id": "cost_v1",
-            "rule_config_id": "rule_v1",
+            "rule_config_id": "rule_v2",
             "start_date": date(2026, 1, 1).isoformat(),
             "end_date": date(2026, 1, 31).isoformat(),
             "train_end": date(2026, 1, 10).isoformat(),

@@ -8,6 +8,8 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Final
 
+from app.domain.causality import as_utc
+
 
 @dataclass(frozen=True, slots=True)
 class QualityIssue:
@@ -142,14 +144,14 @@ class QualityGate:
         if (
             available_at.tzinfo is not None
             and information_cutoff_at.tzinfo is not None
-            and information_cutoff_at > available_at
+            and as_utc(available_at) > as_utc(information_cutoff_at)
         ):
             issues.append(
                 QualityIssue(
                     "<batch>",
                     as_of_date,
                     "information_cutoff_at",
-                    "cannot be later than available_at",
+                    "data is not available by information cutoff",
                 )
             )
         if issues:

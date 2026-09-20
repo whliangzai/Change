@@ -44,9 +44,20 @@ class InMemoryResearchRepository:
                 "strategy_version_id": "strategy_published",
                 "owner_id": None,
                 "name": "foundation strategy",
+                "strategy_type": "STRONG_TREND",
                 "status": "PUBLISHED",
                 "version": "v1",
-                "parameters": {},
+                "parameters": {
+                    "max_positions": 4,
+                    "max_per_industry": 2,
+                    "min_return_5d": "0.02",
+                    "max_return_5d": "0.12",
+                    "min_amount_ratio": "1.2",
+                    "max_amount_ratio": "3.0",
+                    "max_holding_days": 3,
+                    "drawdown_exit": "0.04",
+                },
+                "implementation_version": "strong-trend-v2",
             }
         }
         self.runs: dict[str, dict[str, Any]] = {}
@@ -162,6 +173,21 @@ class InMemoryResearchRepository:
         return _page(rows, page, page_size)
 
     def create_strategy(self, owner_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+        from app.domain.strategy.registry import (
+            StrategyType,
+            expand_parameters,
+            get_strategy_definition,
+        )
+
+        strategy_type = str(payload.get("strategy_type") or StrategyType.STRONG_TREND.value)
+        raw_parameters = dict(payload.get("parameters") or {})
+        try:
+            parameters = expand_parameters(strategy_type, raw_parameters)
+        except ValueError:
+            if "strategy_type" in payload:
+                raise
+            parameters = raw_parameters
+        definition = get_strategy_definition(strategy_type)
         strategy_id = f"strat_{uuid4().hex[:12]}"
         record = {
             "strategy_version_id": strategy_id,
@@ -169,6 +195,9 @@ class InMemoryResearchRepository:
             "status": "DRAFT",
             "version": "v1",
             **payload,
+            "strategy_type": strategy_type,
+            "parameters": parameters,
+            "implementation_version": definition.implementation_version,
         }
         with self._lock:
             self.strategies[strategy_id] = record
@@ -227,17 +256,24 @@ class InMemoryResearchRepository:
             and strategy
             and strategy.get("status") == "PUBLISHED"
             and payload["cost_config_id"] == "cost_v1"
-            and payload["rule_config_id"] == "rule_v1"
+            and payload["rule_config_id"] in {"rule_v1", "rule_v2"}
         )
 
     def create_run(self, owner_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         run_id = f"run_{uuid4().hex[:12]}"
+        strategy = self.strategies.get(str(payload["strategy_version_id"]), {})
         record = {
             "run_id": run_id,
             "owner_id": str(owner_id),
             "status": "QUEUED",
             "result_usable": False,
             "stages": [],
+            "strategy_type": strategy.get("strategy_type", "STRONG_TREND"),
+            "effective_parameters": deepcopy(strategy.get("parameters", {})),
+            "strategy_implementation_version": strategy.get(
+                "implementation_version", "strong-trend-v2"
+            ),
+            "engine_version": "engine-v2",
             **payload,
         }
         with self._lock:

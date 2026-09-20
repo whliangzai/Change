@@ -94,6 +94,7 @@ class TushareIngestionService:
         factors = self._fetch(
             "adjustment_factors", stock_codes, start_date=trade_date, end_date=trade_date
         )
+        price_limits = self._fetch("price_limits", start_date=trade_date, end_date=trade_date)
         st_rows = self._fetch(
             "historical_status", stock_codes, start_date=trade_date, end_date=trade_date
         )
@@ -103,8 +104,8 @@ class TushareIngestionService:
         industries = self._fetch(
             "industry_membership", stock_codes, start_date=trade_date, end_date=trade_date
         )
-        bar_by_code, factor_by_code, industry_by_code = (
-            self._index(rows) for rows in (bars, factors, industries)
+        bar_by_code, factor_by_code, limit_by_code, industry_by_code = (
+            self._index(rows) for rows in (bars, factors, price_limits, industries)
         )
         st_codes = {self._code(row) for row in st_rows}
         suspended_codes = {
@@ -129,6 +130,7 @@ class TushareIngestionService:
         errors.extend(self._missing("security master", codes, master_by_code))
         errors.extend(self._missing("daily bars", daily_codes, bar_by_code))
         errors.extend(self._missing("adjustment factors", daily_stock_codes, factor_by_code))
+        errors.extend(self._missing("price limits", daily_stock_codes, limit_by_code))
         errors.extend(self._missing("industry membership", stock_codes, industry_by_code))
         errors.extend(
             self._invalid_required_fields(
@@ -138,12 +140,19 @@ class TushareIngestionService:
                 stock_codes,
                 bar_by_code,
                 factor_by_code,
+                limit_by_code,
                 master_by_code,
                 industry_by_code,
             )
         )
         rows = self._standardize(
-            daily_codes, trade_date, bar_by_code, factor_by_code, status_by_code, master_by_code
+            daily_codes,
+            trade_date,
+            bar_by_code,
+            factor_by_code,
+            limit_by_code,
+            status_by_code,
+            master_by_code,
         )
         manifest = self._store.write_records(
             "tushare_daily_bars",
@@ -165,6 +174,8 @@ class TushareIngestionService:
             "file_hash": manifest.sha256,
             "actual_pulled_at": pulled_at.isoformat(),
             "mapping_version": self._mapping_version,
+            "adjustment_convention": "RAW_TIMES_ADJUST_FACTOR",
+            "field_convention": "DAILY_OHLCV_OPEN_CLOSE_LIMIT_V2",
             "provider_metadata": {
                 "calendar": calendar,
                 "security_master": master,
@@ -278,14 +289,16 @@ class TushareIngestionService:
         trade_date: date,
         bars: Mapping[str, Mapping[str, Any]],
         factors: Mapping[str, Mapping[str, Any]],
+        price_limits: Mapping[str, Mapping[str, Any]],
         statuses: Mapping[str, Mapping[str, Any]],
         masters: Mapping[str, Mapping[str, Any]],
     ) -> list[dict[str, Any]]:
         rows = []
         for code in sorted(codes):
-            bar, factor, status, master = (
+            bar, factor, price_limit, status, master = (
                 bars.get(code, {}),
                 factors.get(code, {}),
+                price_limits.get(code, {}),
                 statuses.get(code, {}),
                 masters.get(code, {}),
             )
@@ -308,6 +321,22 @@ class TushareIngestionService:
                 and raw_low is not None
                 and raw_close is not None
             )
+            upper_limit = cls._decimal(cls._pick(price_limit, "up_limit", "upper_limit"))
+            lower_limit = cls._decimal(cls._pick(price_limit, "down_limit", "lower_limit"))
+            open_limit_up: bool | None
+            open_limit_down: bool | None
+            close_limit_up: bool | None
+            close_limit_down: bool | None
+            if code in cls.INDEX_CODES:
+                open_limit_up = False
+                open_limit_down = False
+                close_limit_up = False
+                close_limit_down = False
+            else:
+                open_limit_up = raw_open == upper_limit if upper_limit is not None else None
+                open_limit_down = raw_open == lower_limit if lower_limit is not None else None
+                close_limit_up = raw_close == upper_limit if upper_limit is not None else None
+                close_limit_down = raw_close == lower_limit if lower_limit is not None else None
             rows.append(
                 {
                     "symbol": code,
@@ -329,6 +358,12 @@ class TushareIngestionService:
                     "adjust_factor": multiplier,
                     "available_at": cls._available_at(trade_date),
                     "information_cutoff_at": cls._cutoff_at(trade_date),
+                    "open_limit_up": open_limit_up,
+                    "open_limit_down": open_limit_down,
+                    "close_limit_up": close_limit_up,
+                    "close_limit_down": close_limit_down,
+                    "limit_up": close_limit_up,
+                    "limit_down": close_limit_down,
                     "is_st": cls._truth(cls._pick(status, "is_st", "st_flag")),
                     "is_suspended": cls._truth(cls._pick(status, "is_suspended", "suspended")),
                     "is_delist_period": cls._truth(
@@ -377,6 +412,7 @@ class TushareIngestionService:
         industry_codes: set[str],
         bars: Mapping[str, Mapping[str, Any]],
         factors: Mapping[str, Mapping[str, Any]],
+        price_limits: Mapping[str, Mapping[str, Any]],
         masters: Mapping[str, Mapping[str, Any]],
         industries: Mapping[str, Mapping[str, Any]],
     ) -> list[str]:
@@ -391,6 +427,11 @@ class TushareIngestionService:
         for code in sorted(factor_codes):
             if cls._pick(factors.get(code, {}), "adjust_factor", "adj_factor") is None:
                 errors.append(f"adjustment factor missing for {code}")
+            limit = price_limits.get(code, {})
+            if cls._pick(limit, "up_limit", "upper_limit") is None:
+                errors.append(f"price limit upper bound missing for {code}")
+            if cls._pick(limit, "down_limit", "lower_limit") is None:
+                errors.append(f"price limit lower bound missing for {code}")
         for code in sorted(all_codes):
             if cls._as_date(cls._pick(masters.get(code, {}), "listed_at", "list_date")) is None:
                 errors.append(f"listing date missing for {code}")
@@ -455,7 +496,7 @@ class TushareIngestionService:
 
     @classmethod
     def _cutoff_at(cls, value: date) -> datetime:
-        return datetime.combine(value, time(15), cls.SHANGHAI)
+        return cls._available_at(value)
 
     @classmethod
     def _available_at(cls, value: date) -> datetime:

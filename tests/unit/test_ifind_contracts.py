@@ -74,8 +74,7 @@ def test_contract_is_versioned_and_covers_required_historical_datasets() -> None
 
 def test_mapping_validation_blocks_missing_required_provider_fields() -> None:
     available = {
-        name: dataset.provider_fields
-        for name, dataset in DEFAULT_IFIND_CONTRACT.datasets.items()
+        name: dataset.provider_fields for name, dataset in DEFAULT_IFIND_CONTRACT.datasets.items()
     }
     available["historical_status"] = available["historical_status"] - {"isST"}
 

@@ -120,7 +120,8 @@ class SecurityStatusHistory(Base):
     is_suspended: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_delist_period: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     board: Mapped[str] = mapped_column(String(16), nullable=False)
-    source_batch_id: Mapped[UUID] = mapped_column(ForeignKey("data_batch.id"), nullable=False)
+    source_batch_id: Mapped[UUID] = mapped_column(ForeignKey("data_batch.id"), primary_key=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class IndustryMembershipHistory(Base):
@@ -129,7 +130,8 @@ class IndustryMembershipHistory(Base):
     industry_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     effective_from: Mapped[date] = mapped_column(Date, primary_key=True)
     effective_to: Mapped[date | None] = mapped_column(Date)
-    source_batch_id: Mapped[UUID] = mapped_column(ForeignKey("data_batch.id"), nullable=False)
+    source_batch_id: Mapped[UUID] = mapped_column(ForeignKey("data_batch.id"), primary_key=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     __table_args__ = (
         Index(
             "ix_industry_membership_history_dates", "security_id", "effective_from", "effective_to"
@@ -153,7 +155,14 @@ class DailyBar(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
     adjust_factor: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
     available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    data_batch_id: Mapped[UUID] = mapped_column(ForeignKey("data_batch.id"), nullable=False)
+    open_limit_up: Mapped[bool | None] = mapped_column(Boolean)
+    open_limit_down: Mapped[bool | None] = mapped_column(Boolean)
+    close_limit_up: Mapped[bool | None] = mapped_column(Boolean)
+    close_limit_down: Mapped[bool | None] = mapped_column(Boolean)
+    # Deprecated compatibility fields. New engine code uses the explicit open/close fields.
+    limit_up: Mapped[bool | None] = mapped_column(Boolean)
+    limit_down: Mapped[bool | None] = mapped_column(Boolean)
+    data_batch_id: Mapped[UUID] = mapped_column(ForeignKey("data_batch.id"), primary_key=True)
     __table_args__ = (Index("ix_daily_bar_trade_date_security", "trade_date", "security_id"),)
 
 
@@ -163,7 +172,7 @@ class AdjustmentFactor(Base):
     effective_date: Mapped[date] = mapped_column(Date, primary_key=True)
     factor: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
     factor_type: Mapped[str] = mapped_column(String(16), primary_key=True)
-    data_batch_id: Mapped[UUID] = mapped_column(ForeignKey("data_batch.id"), nullable=False)
+    data_batch_id: Mapped[UUID] = mapped_column(ForeignKey("data_batch.id"), primary_key=True)
 
 
 class RuleConfigVersion(UUIDPrimaryKeyMixin, Base):
@@ -202,6 +211,7 @@ class StrategyVersion(UUIDPrimaryKeyMixin, Base):
         Index("ix_strategy_version_status", "status"),
     )
     code: Mapped[str] = mapped_column(String(64), nullable=False)
+    strategy_type: Mapped[str] = mapped_column(String(32), nullable=False, default="STRONG_TREND")
     version: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     parameters: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
@@ -388,14 +398,34 @@ class PerformanceMetric(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "performance_metric"
     __table_args__ = (
         UniqueConstraint(
-            "run_id", "segment", "metric_code", name="uq_performance_metric_run_segment_code"
+            "run_id",
+            "series_code",
+            "segment",
+            "metric_code",
+            name="uq_performance_metric_run_series_segment_code",
         ),
     )
     run_id: Mapped[UUID] = mapped_column(ForeignKey("backtest_run.id"), nullable=False)
+    series_code: Mapped[str] = mapped_column(String(32), nullable=False, default="STRATEGY")
     segment: Mapped[str] = mapped_column(String(16), nullable=False)
     metric_code: Mapped[str] = mapped_column(String(32), nullable=False)
     metric_value: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
     calculation_note: Mapped[str | None] = mapped_column(Text)
+
+
+class BacktestSeriesPoint(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "backtest_series_point"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "series_code", "trade_date", name="uq_backtest_series_run_code_date"
+        ),
+        Index("ix_backtest_series_run_date", "run_id", "trade_date"),
+    )
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("backtest_run.id"), nullable=False)
+    series_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    value: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    availability: Mapped[str] = mapped_column(String(32), nullable=False, default="AVAILABLE")
 
 
 class ReportArtifact(UUIDPrimaryKeyMixin, Base):

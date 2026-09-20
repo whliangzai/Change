@@ -24,6 +24,10 @@ def _bar(symbol: str, day: int, close: Decimal) -> dict[str, str]:
         "amount": "100000",
         "adjustment_factor": "1.0",
         "available_at": f"{trade_date.isoformat()}T18:00:00+00:00",
+        "open_limit_up": "false",
+        "open_limit_down": "false",
+        "close_limit_up": "false",
+        "close_limit_down": "false",
     }
 
 

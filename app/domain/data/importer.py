@@ -13,6 +13,8 @@ from typing import Final
 
 import pandas as pd
 
+from app.domain.causality import as_utc
+
 
 @dataclass(frozen=True, slots=True)
 class ImportedDataset:
@@ -58,9 +60,9 @@ class AuthorizedFileImporter:
         if (
             available_at is not None
             and information_cutoff_at is not None
-            and information_cutoff_at > available_at
+            and as_utc(available_at) > as_utc(information_cutoff_at)
         ):
-            raise ValueError("information_cutoff_at cannot be later than available_at")
+            raise ValueError("data is not available by information cutoff")
         frame = (
             pd.read_csv(source_path)
             if source_path.suffix.lower() == ".csv"

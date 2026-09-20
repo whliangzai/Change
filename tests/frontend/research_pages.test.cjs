@@ -384,3 +384,20 @@ test('data import tabs switch between provider and local panels', () => {
   assert.equal(ui.get('#provider-import-panel').hidden, true);
   assert.equal(ui.get('#local-import-panel').hidden, false);
 });
+
+test('multi-strategy forms and reports keep typed, structured, responsive evidence', () => {
+  const strategies = fs.readFileSync(path.join(__dirname, '../../static/js/strategy_versions.js'), 'utf8');
+  const backtests = fs.readFileSync(path.join(__dirname, '../../static/js/backtest_detail.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(__dirname, '../../static/css/research-pages.css'), 'utf8');
+
+  assert.match(strategies, /else \{\s*input\.required = true;\s*input\.type = 'number'/);
+  assert.doesNotMatch(strategies, /input\.dataset\.label = title; input\.required = true/);
+  assert.match(strategies, /exclusiveMinimum/);
+  assert.match(strategies, /validateParameterSet\(form\)/);
+  assert.match(strategies, /item\.display_name/);
+  assert.match(backtests, /renderMetricValue/);
+  assert.match(backtests, /className = 'metric-breakdown'/);
+  assert.match(backtests, /data-label="最大回撤"/);
+  assert.match(styles, /#segment-metrics td::before/);
+  assert.match(styles, /parameter-toggle-control input\[type="checkbox"\]/);
+});

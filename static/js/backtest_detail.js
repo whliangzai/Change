@@ -57,6 +57,8 @@
       ['运行号', run.run_id], ['运行状态', statusLabel(run.status, 'job')], ['数据批次', run.data_batch_id],
       ['策略版本', run.strategy_version_id], ['成本版本', run.cost_config_id], ['规则版本', run.rule_config_id],
       ['日期区间', `${run.start_date || '--'} 至 ${run.end_date || '--'}`],
+      ['策略类型', run.strategy_type || '--'], ['引擎版本', run.engine_version || '--'],
+      ['策略实现', run.strategy_implementation_version || '--'], ['有效参数', JSON.stringify(run.effective_parameters || {})],
       ['结果可用性', run.result_usable ? '可用' : '尚不可用'], ['结果快照', run.snapshot_hash || '--'],
       ['基准', run.benchmark_symbol || '--'], ['初始权益', run.initial_equity || '--'],
     ];
@@ -72,6 +74,76 @@
     setExecute(run);
   }
 
+  function renderSeries(series) {
+    const entries = Object.entries(series || {}).filter(([, item]) => item?.points?.length);
+    const figure = $('#equity-series'); const svg = $('#equity-chart'); const legend = $('#equity-legend');
+    svg.replaceChildren(); legend.replaceChildren(); figure.hidden = !entries.length;
+    if (!entries.length) return;
+    const colors = { STRATEGY: '#185adb', BENCHMARK_PRIMARY: '#16704a', UNIVERSE_EQUAL_WEIGHT: '#b56b00', BENCHMARK_SECONDARY: '#7553a6' };
+    const labels = { STRATEGY: '策略', BENCHMARK_PRIMARY: '主基准', UNIVERSE_EQUAL_WEIGHT: '股票池等权（合成、不可投资）', BENCHMARK_SECONDARY: '次基准' };
+    const values = entries.flatMap(([, item]) => item.points.map((point) => Number(point.value))).filter(Number.isFinite);
+    const min = Math.min(...values); const max = Math.max(...values); const span = max - min || 1;
+    [0, 0.5, 1].forEach((ratio) => {
+      const y = 24 + ratio * 260; const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', '64'); line.setAttribute('x2', '940'); line.setAttribute('y1', y); line.setAttribute('y2', y); line.setAttribute('class', 'chart-grid'); svg.append(line);
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text'); text.setAttribute('x', '8'); text.setAttribute('y', y + 4); text.setAttribute('class', 'chart-label'); text.textContent = (max - ratio * span).toFixed(2); svg.append(text);
+    });
+    entries.forEach(([code, item]) => {
+      const points = item.points.map((point, index) => {
+        const x = 64 + (item.points.length === 1 ? 0 : index / (item.points.length - 1)) * 876;
+        const y = 24 + (max - Number(point.value)) / span * 260;
+        return `${x.toFixed(2)},${y.toFixed(2)}`;
+      }).join(' ');
+      const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline'); polyline.setAttribute('points', points); polyline.setAttribute('fill', 'none'); polyline.setAttribute('stroke', colors[code] || '#5d6b78'); polyline.setAttribute('class', 'equity-line'); svg.append(polyline);
+      const key = document.createElement('span'); key.style.setProperty('--series-color', colors[code] || '#5d6b78'); key.textContent = `${labels[code] || code}${item.availability === 'SYNTHETIC_NOT_INVESTABLE' ? ' · 合成' : ''}`; legend.append(key);
+    });
+  }
+
+  function renderSegmentMetrics(segmentMetrics) {
+    const body = $('#segment-metrics tbody'); body.replaceChildren();
+    Object.entries(segmentMetrics || {}).sort().forEach(([key, metrics]) => {
+      const row = document.createElement('tr');
+      row.innerHTML = `<th scope="row">${esc(key)}</th><td class="numeric" data-label="收益">${esc(metrics.total_return ?? '--')}</td><td class="numeric" data-label="最大回撤">${esc(metrics.max_drawdown ?? '--')}</td><td class="numeric" data-label="夏普">${esc(metrics.sharpe ?? '--')}</td>`;
+      body.append(row);
+    });
+    if (!body.children.length) { const row = document.createElement('tr'); row.innerHTML = '<td colspan="4">尚无可用分段指标</td>'; body.append(row); }
+  }
+
+  function renderMetricValue(value) {
+    if (value === null || value === undefined || value === '') return document.createTextNode('--');
+    if (typeof value !== 'object') return document.createTextNode(String(value));
+    const entries = Array.isArray(value) ? value.map((item, index) => [String(index + 1), item]) : Object.entries(value);
+    if (!entries.length) return document.createTextNode('暂无数据');
+    const list = document.createElement('dl'); list.className = 'metric-breakdown';
+    entries.forEach(([key, item]) => {
+      const term = document.createElement('dt'); term.textContent = key;
+      const definition = document.createElement('dd');
+      definition.textContent = typeof item === 'object' && item !== null ? JSON.stringify(item) : String(item ?? '--');
+      list.append(term, definition);
+    });
+    return list;
+  }
+
+  function renderFullMetrics(metrics) {
+    const labels = {
+      available: '指标可用', total_return: '区间收益', max_drawdown: '最大回撤', sharpe: '夏普比率',
+      win_rate: '胜率', profit_loss_ratio: '盈亏比', average_holding_period: '平均持有交易日',
+      turnover: '换手率', total_cost: '总成本', industry_exposure: '行业暴露',
+      monthly_returns: '月度收益', yearly_returns: '年度收益', reason: '不可用原因',
+    };
+    const target = $('#report-metrics'); target.replaceChildren();
+    Object.entries(metrics || {}).forEach(([key, value]) => {
+      const term = document.createElement('dt'); term.textContent = labels[key] || key;
+      const definition = document.createElement('dd'); definition.append(renderMetricValue(value));
+      target.append(term, definition);
+    });
+    if (!target.children.length) {
+      const term = document.createElement('dt'); term.textContent = '指标';
+      const definition = document.createElement('dd'); definition.textContent = '--';
+      target.append(term, definition);
+    }
+  }
+
   async function loadChild(id, kind) {
     const stateTarget = `#${kind}-state`;
     const unavailableTarget = `#${kind}-unavailable`;
@@ -82,7 +154,9 @@
       const data = payload.data || {};
       if (kind === 'report') {
         const metrics = data.metrics || {};
-        $('#report-metrics').innerHTML = Object.entries(metrics).map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value)}</dd>`).join('') || '<dt>指标</dt><dd>--</dd>';
+        renderFullMetrics(metrics);
+        renderSeries(data.series);
+        renderSegmentMetrics(data.segment_metrics);
         if (data.result_usable) state(stateTarget, '绩效报告可用于研究复核。', 'success', payload.request_id);
         else {
           state(stateTarget, '绩效报告尚不可用。', 'unavailable', payload.request_id);
@@ -92,7 +166,7 @@
         const body = $('#trades-table tbody'); body.replaceChildren();
         (data.items || []).forEach((trade) => {
           const row = document.createElement('tr');
-          row.innerHTML = `<td class="date-value">${esc(trade.trade_date || trade.date || '--')}</td><td><code>${esc(trade.symbol || '--')}</code></td><td>${esc(trade.side || '--')}</td><td class="numeric">${esc(trade.quantity ?? '--')}</td><td class="numeric">${esc(trade.price || trade.execution_price || '--')}</td><td class="numeric">${esc(trade.fees || trade.cost || '--')}</td>`;
+          row.innerHTML = `<td class="date-value">${esc(trade.execution_date || trade.trade_date || trade.date || '--')}</td><td><code>${esc(trade.symbol || '--')}</code></td><td>${esc(trade.side || '--')}</td><td>${esc(trade.status || '--')}</td><td class="numeric">${esc(trade.quantity ?? '--')}</td><td class="numeric">${esc(trade.price || trade.execution_price || '--')}</td><td class="numeric">${esc(trade.fees || trade.cost || '--')}</td><td>${esc(trade.reason || (trade.trigger_reasons || []).join(', ') || '--')}</td>`;
           body.append(row);
         });
         if (data.items?.length) state(stateTarget, `已加载 ${data.items.length} 笔模拟交易明细。`, 'success', payload.request_id);

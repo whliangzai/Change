@@ -34,6 +34,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--database-url", default=os.getenv("DATABASE_URL"))
     parser.add_argument("--owner-id", default=os.getenv("BACKTEST_OWNER_ID"))
     parser.add_argument("--data-batch-id", default=os.getenv("BACKTEST_DATA_BATCH_ID"))
+    parser.add_argument(
+        "--data-batch-ids",
+        default=os.getenv("BACKTEST_DATA_BATCH_IDS"),
+        help="Comma-separated ordered batch IDs; the first must equal --data-batch-id",
+    )
     parser.add_argument("--strategy-version-id", default=os.getenv("BACKTEST_STRATEGY_VERSION_ID"))
     parser.add_argument("--start-date", default=os.getenv("BACKTEST_START_DATE"))
     parser.add_argument("--end-date", default=os.getenv("BACKTEST_END_DATE"))
@@ -47,7 +52,7 @@ def _parser() -> argparse.ArgumentParser:
         "--initial-equity", default=os.getenv("BACKTEST_INITIAL_EQUITY", "20000.00")
     )
     parser.add_argument("--cost-config-id", default=os.getenv("BACKTEST_COST_CONFIG_ID", "cost_v1"))
-    parser.add_argument("--rule-config-id", default=os.getenv("BACKTEST_RULE_CONFIG_ID", "rule_v1"))
+    parser.add_argument("--rule-config-id", default=os.getenv("BACKTEST_RULE_CONFIG_ID", "rule_v2"))
     parser.add_argument(
         "--information-cutoff-at", default=os.getenv("BACKTEST_INFORMATION_CUTOFF_AT")
     )
@@ -70,7 +75,11 @@ def _payload(args: argparse.Namespace) -> dict[str, object]:
         "initial_equity": args.initial_equity,
         "mode": "BACKTEST",
     }
-    if any(value in {None, ""} for value in values.values()):
+    if args.data_batch_ids:
+        values["data_batch_ids"] = [
+            value.strip() for value in args.data_batch_ids.split(",") if value.strip()
+        ]
+    if any(value is None or value == "" for value in values.values()):
         raise ValueError(
             "BACKTEST_DATA_BATCH_ID, BACKTEST_STRATEGY_VERSION_ID and all backtest dates are required"
         )
@@ -137,7 +146,7 @@ def main(service: Callable[..., object] | None = None) -> int:
                     actor_roles=("SYSTEM",),
                     action="LOCAL_DEFAULT_CONFIG_INITIALIZE",
                     object_type="configuration_versions",
-                    object_id="cost_v1,rule_v1",
+                    object_id="cost_v1,rule_v1,rule_v2",
                     request_id="cli:run_backtest",
                     result="SUCCESS",
                     after_summary=seed_result,

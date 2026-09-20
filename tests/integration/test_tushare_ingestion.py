@@ -18,8 +18,18 @@ from app.infrastructure.tushare.http_client import TushareHttpClient
 
 
 class TushareRecordingClient:
-    def __init__(self, complete: bool = True) -> None:
+    def __init__(
+        self,
+        complete: bool = True,
+        *,
+        limit_evidence: bool = True,
+        at_upper_limit: bool = False,
+        close_at_upper_limit: bool = False,
+    ) -> None:
         self.complete = complete
+        self.limit_evidence = limit_evidence
+        self.at_upper_limit = at_upper_limit
+        self.close_at_upper_limit = close_at_upper_limit
 
     def preflight(self):
         return {"status": "ok"}
@@ -38,12 +48,24 @@ class TushareRecordingClient:
                 {
                     "ts_code": code,
                     "trade_date": day.strftime("%Y%m%d"),
-                    "open": 10,
+                    "open": 11 if self.at_upper_limit and code == "600000.SH" else 10,
                     "high": 11,
                     "low": 9,
-                    "close": 10.5,
+                    "close": (11 if self.close_at_upper_limit and code == "600000.SH" else 10.5),
                     "vol": 100,
                     "amount": 1000,
+                }
+                for code in codes
+            ]
+        if dataset == "price_limits":
+            if not self.limit_evidence:
+                return []
+            return [
+                {
+                    "ts_code": code,
+                    "trade_date": day.strftime("%Y%m%d"),
+                    "up_limit": 11,
+                    "down_limit": 9,
                 }
                 for code in codes
             ]
@@ -85,9 +107,7 @@ class FullScopeTushareRecordingClient(TushareRecordingClient):
                     "market": "主板",
                 }
             ]
-            paused = [
-                {"ts_code": "600002.SH", "list_date": "20100101", "market": "主板"}
-            ]
+            paused = [{"ts_code": "600002.SH", "list_date": "20100101", "market": "主板"}]
             return (
                 active
                 if list_status == "L"
@@ -97,6 +117,17 @@ class FullScopeTushareRecordingClient(TushareRecordingClient):
                 if list_status == "P"
                 else []
             )
+        if dataset == "price_limits":
+            day = kwargs.get("start_date", date(2025, 1, 2))
+            return [
+                {
+                    "ts_code": code,
+                    "trade_date": day.strftime("%Y%m%d"),
+                    "up_limit": 11,
+                    "down_limit": 9,
+                }
+                for code in ("000001.SZ", "600000.SH", "600001.SH", "600002.SH")
+            ]
         return super().fetch_dataset(dataset, codes, **kwargs)
 
 
@@ -158,11 +189,25 @@ class AKShareRecordingClient:
         ]
 
 
-def _service(tmp_path: Path, *, complete: bool = True, different: bool = False):
+def _service(
+    tmp_path: Path,
+    *,
+    complete: bool = True,
+    different: bool = False,
+    limit_evidence: bool = True,
+    at_upper_limit: bool = False,
+    close_at_upper_limit: bool = False,
+):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     engine = create_engine(f"sqlite:///{tmp_path / 'tushare.db'}")
     Base.metadata.create_all(engine)
     service = TushareIngestionService(
-        TushareRecordingClient(complete),
+        TushareRecordingClient(
+            complete,
+            limit_evidence=limit_evidence,
+            at_upper_limit=at_upper_limit,
+            close_at_upper_limit=close_at_upper_limit,
+        ),
         SqlAlchemyResearchRepository.from_engine(engine),
         validation_client=AKShareRecordingClient(different),
         artifact_root=tmp_path / "artifacts",
@@ -179,8 +224,50 @@ def test_tushare_pilot_publishes_with_akshare_warning(tmp_path: Path) -> None:
     assert result["record_count"] == 4
     assert result["quality_summary"]["provenance"]["mapping_version"] == "v1"
     assert result["quality_summary"]["warnings"][0]["kind"] == "AKSHARE_DIFFERENCE"
+    assert result["information_cutoff_at"].endswith("T10:30:00+00:00")
     with engine.connect() as connection:
-        assert connection.execute(select(models.DailyBar)).fetchall()
+        limits = connection.execute(
+            select(models.DailyBar.limit_up, models.DailyBar.limit_down)
+        ).all()
+        assert limits
+        assert all(limit_up is False and limit_down is False for limit_up, limit_down in limits)
+
+
+def test_tushare_persists_explicit_price_limit_evidence_and_fails_closed_when_missing(
+    tmp_path: Path,
+) -> None:
+    service, engine = _service(tmp_path, at_upper_limit=True)
+    result = service.import_business_date("2025-01-02", "pilot")
+    assert result["quality_status"] in {"AVAILABLE", "WARNING_AVAILABLE"}
+    with engine.connect() as connection:
+        limit_state = connection.execute(
+            select(
+                models.DailyBar.open_limit_up,
+                models.DailyBar.close_limit_up,
+            )
+            .join(models.Security, models.DailyBar.security_id == models.Security.id)
+            .where(models.Security.symbol == "600000.SH")
+        ).one()
+    assert limit_state == (True, False)
+
+    close_service, close_engine = _service(tmp_path / "close-limit", close_at_upper_limit=True)
+    close_result = close_service.import_business_date("2025-01-02", "pilot")
+    assert close_result["quality_status"] in {"AVAILABLE", "WARNING_AVAILABLE"}
+    with close_engine.connect() as connection:
+        close_limit_state = connection.execute(
+            select(
+                models.DailyBar.open_limit_up,
+                models.DailyBar.close_limit_up,
+            )
+            .join(models.Security, models.DailyBar.security_id == models.Security.id)
+            .where(models.Security.symbol == "600000.SH")
+        ).one()
+    assert close_limit_state == (False, True)
+
+    missing_service, _ = _service(tmp_path / "missing", limit_evidence=False)
+    missing = missing_service.import_business_date("2025-01-02", "pilot")
+    assert missing["quality_status"] == "UNAVAILABLE"
+    assert any("price limit" in str(issue) for issue in missing["quality_summary"]["issues"])
 
 
 def test_tushare_missing_required_history_blocks_publication(tmp_path: Path) -> None:
@@ -253,9 +340,7 @@ def test_tushare_full_scope_includes_delisted_securities_only_before_delisting(
     assert before_delisting["record_count"] == 6
     assert client.security_master_statuses == ["L", "D", "P"]
     eligible_before = repository.list_pool(date(2019, 12, 31), "ELIGIBLE", 1, 100)
-    assert {"600001.SH", "600002.SH"}.issubset(
-        {row["symbol"] for row in eligible_before["items"]}
-    )
+    assert {"600001.SH", "600002.SH"}.issubset({row["symbol"] for row in eligible_before["items"]})
 
     after_delisting = service.import_business_date("2020-01-03", "full")
     assert after_delisting["quality_status"] == "AVAILABLE"
@@ -286,11 +371,15 @@ def test_tushare_full_scope_persists_suspension_without_daily_bar(tmp_path: Path
             .where(models.Security.symbol == "600000.SH")
         ).scalar_one()
         assert status is True
-        daily_symbols = connection.execute(
-            select(models.Security.symbol)
-            .join(models.DailyBar, models.DailyBar.security_id == models.Security.id)
-            .where(models.DailyBar.trade_date == date(2025, 1, 2))
-        ).scalars().all()
+        daily_symbols = (
+            connection.execute(
+                select(models.Security.symbol)
+                .join(models.DailyBar, models.DailyBar.security_id == models.Security.id)
+                .where(models.DailyBar.trade_date == date(2025, 1, 2))
+            )
+            .scalars()
+            .all()
+        )
         assert "600000.SH" not in daily_symbols
 
 
@@ -312,11 +401,15 @@ def test_tushare_full_scope_keeps_intraday_suspension_bar_but_excludes_pool(
     assert result["quality_status"] == "AVAILABLE", result["quality_summary"]
     assert result["record_count"] == 4
     with engine.connect() as connection:
-        daily_symbols = connection.execute(
-            select(models.Security.symbol)
-            .join(models.DailyBar, models.DailyBar.security_id == models.Security.id)
-            .where(models.DailyBar.trade_date == date(2025, 1, 2))
-        ).scalars().all()
+        daily_symbols = (
+            connection.execute(
+                select(models.Security.symbol)
+                .join(models.DailyBar, models.DailyBar.security_id == models.Security.id)
+                .where(models.DailyBar.trade_date == date(2025, 1, 2))
+            )
+            .scalars()
+            .all()
+        )
         assert "600000.SH" in daily_symbols
     eligible = repository.list_pool(date(2025, 1, 2), "ELIGIBLE", 1, 100)
     assert "600000.SH" not in {row["symbol"] for row in eligible["items"]}

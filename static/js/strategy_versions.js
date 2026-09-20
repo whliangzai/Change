@@ -14,6 +14,7 @@
   let activeListRequest = 0;
   let writing = false;
   let versionsReady = false;
+  let strategyCatalog = [];
   const statuses = { DRAFT: '草稿', PENDING_REVIEW: '待审核', PUBLISHED: '已发布', ARCHIVED: '已归档' };
 
   // Token roles only guide the UI; the server remains the authorization boundary.
@@ -43,6 +44,104 @@
     $('#strategy-review-evidence').textContent = !bound ? '请先加载版本详情，再核对参数与差异。'
       : !canReview() ? '当前账户可查看版本；提交审核、发布和退回需要审核员或管理员权限。'
         : `操作版本：${currentRecord.strategy_version_id} · ${statuses[currentRecord.status] || currentRecord.status}。${allowed.length ? '请核对参数并填写审核依据。' : '当前状态不允许审核操作。'}`;
+  }
+
+  function constraintText(constraints) {
+    const values = [];
+    if (constraints.minimum !== undefined) values.push(`不小于 ${constraints.minimum}`);
+    if (constraints.exclusiveMinimum !== undefined) values.push(`大于 ${constraints.exclusiveMinimum}`);
+    if (constraints.maximum !== undefined) values.push(`不大于 ${constraints.maximum}`);
+    if (constraints.exclusiveMaximum !== undefined) values.push(`小于 ${constraints.exclusiveMaximum}`);
+    return values.length ? `取值范围：${values.join('，')}。` : '';
+  }
+
+  function validateParameter(input) {
+    input.setCustomValidity('');
+    if (input.type === 'checkbox') return true;
+    const raw = input.value.trim();
+    const label = input.dataset.label || input.dataset.parameter;
+    if (!raw) {
+      input.setCustomValidity(`请填写${label}。`);
+      return false;
+    }
+    const value = Number(raw);
+    let message = '';
+    if (!Number.isFinite(value)) message = `${label}必须是有效数字。`;
+    else if (input.dataset.exclusiveMinimum !== undefined && value <= Number(input.dataset.exclusiveMinimum)) message = `${label}必须大于 ${input.dataset.exclusiveMinimum}。`;
+    else if (input.dataset.exclusiveMaximum !== undefined && value >= Number(input.dataset.exclusiveMaximum)) message = `${label}必须小于 ${input.dataset.exclusiveMaximum}。`;
+    input.setCustomValidity(message);
+    return !message;
+  }
+
+  function validateParameterSet(form) {
+    const inputs = Array.from(form.querySelectorAll('[data-parameter]'));
+    let valid = inputs.every(validateParameter);
+    const byName = Object.fromEntries(inputs.map((input) => [input.dataset.parameter, input]));
+    const validateOrder = (lowerName, upperName, message) => {
+      const lower = byName[lowerName]; const upper = byName[upperName];
+      if (!lower || !upper || !validateParameter(lower) || !validateParameter(upper)) return;
+      if (Number(lower.value) > Number(upper.value)) { upper.setCustomValidity(message); valid = false; }
+    };
+    validateOrder('min_return_5d', 'max_return_5d', '5日涨幅上限不得低于下限。');
+    validateOrder('min_amount_ratio', 'max_amount_ratio', '成交额比上限不得低于下限。');
+    const shortWindow = byName.short_window; const longWindow = byName.long_window;
+    if (shortWindow && longWindow && Number(shortWindow.value) >= Number(longWindow.value)) {
+      longWindow.setCustomValidity('长期均线窗口必须大于短期均线窗口。');
+      valid = false;
+    }
+    if (!valid || (typeof form.checkValidity === 'function' && !form.checkValidity())) {
+      if (typeof form.reportValidity === 'function') form.reportValidity();
+      return false;
+    }
+    return true;
+  }
+
+  function renderParameterFields() {
+    const type = $('#strategy-type').value;
+    const definition = strategyCatalog.find((item) => item.strategy_type === type);
+    const container = $('#strategy-parameters');
+    container.replaceChildren();
+    const legend = document.createElement('legend'); legend.textContent = '策略参数'; container.append(legend);
+    if (!definition) { const hint = document.createElement('p'); hint.className = 'muted'; hint.textContent = '请选择策略类型。'; container.append(hint); return; }
+    Object.entries(definition.default_parameters || {}).forEach(([name, value]) => {
+      const constraints = definition.parameter_schema?.properties?.[name] || {};
+      const title = constraints.title || name;
+      const label = document.createElement('label'); label.className = 'parameter-field';
+      const titleElement = document.createElement('span'); titleElement.className = 'parameter-label'; titleElement.textContent = title;
+      const input = document.createElement('input'); input.name = `parameter_${name}`;
+      input.dataset.parameter = name; input.dataset.label = title;
+      const hint = document.createElement('small'); hint.className = 'parameter-help'; hint.id = `strategy-parameter-${name}-help`;
+      hint.textContent = `${constraints.description || ''}${constraints.description ? ' ' : ''}${constraintText(constraints)}`.trim();
+      input.setAttribute('aria-describedby', hint.id);
+      if (typeof value === 'boolean') {
+        input.type = 'checkbox'; input.checked = value;
+        const control = document.createElement('span'); control.className = 'parameter-toggle-control';
+        const stateText = document.createElement('span'); stateText.textContent = input.checked ? '已启用' : '未启用';
+        input.addEventListener('change', () => { stateText.textContent = input.checked ? '已启用' : '未启用'; });
+        control.append(input, stateText); label.classList.add('parameter-toggle'); label.append(titleElement, control, hint);
+      } else {
+        input.required = true;
+        input.type = 'number'; input.step = Number.isInteger(value) ? '1' : 'any'; input.value = value;
+        if (constraints.minimum !== undefined) input.min = constraints.minimum;
+        if (constraints.maximum !== undefined) input.max = constraints.maximum;
+        if (constraints.exclusiveMinimum !== undefined) input.dataset.exclusiveMinimum = constraints.exclusiveMinimum;
+        if (constraints.exclusiveMaximum !== undefined) input.dataset.exclusiveMaximum = constraints.exclusiveMaximum;
+        input.addEventListener('input', () => validateParameter(input));
+        label.append(titleElement, input, hint);
+      }
+      container.append(label);
+    });
+  }
+
+  async function loadCatalog() {
+    const payload = await request('/api/v1/strategies/catalog');
+    strategyCatalog = payload.data?.items || [];
+    const select = $('#strategy-type'); select.replaceChildren();
+    strategyCatalog.forEach((item) => select.append(new Option(
+      `${item.display_name || item.strategy_type}（${item.strategy_type}）`, item.strategy_type,
+    )));
+    select.disabled = !strategyCatalog.length;
+    renderParameterFields();
   }
 
   function clearVersion() {
@@ -223,13 +322,14 @@
     event.preventDefault();
     const form = event.currentTarget;
     const submit = $('#strategy-create-submit');
-    let parameters;
-    try {
-      parameters = JSON.parse(form.parameters.value || '{}');
-    } catch (_) {
-      setState('#strategy-create-state', '参数必须是有效 JSON。恢复路径：修正 JSON 结构后重试。', 'error');
+    if (!validateParameterSet(form)) {
+      setState('#strategy-create-state', '请修正标记的策略参数后再提交。', 'error');
       return;
     }
+    const parameters = {};
+    form.querySelectorAll('[data-parameter]').forEach((input) => {
+      parameters[input.dataset.parameter] = input.type === 'checkbox' ? input.checked : Number(input.value);
+    });
     if (submit.disabled || writing) return;
     if (!parameters || Array.isArray(parameters) || typeof parameters !== 'object') {
       setState('#strategy-create-state', '参数必须是 JSON 对象，例如 {}。', 'error');
@@ -249,6 +349,7 @@
         body: {
           name: form.name.value.trim(),
           change_reason: form.change_reason.value.trim(),
+          strategy_type: form.strategy_type.value,
           parameters,
         },
       });
@@ -325,5 +426,6 @@
   });
 
   syncReview();
-  loadVersions();
+  $('#strategy-type').addEventListener('change', renderParameterFields);
+  Promise.all([loadCatalog(), loadVersions()]).catch((error) => showRecovery(error, '#strategy-create-state'));
 }());
